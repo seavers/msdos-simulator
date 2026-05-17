@@ -11,8 +11,8 @@
       <header class="hero">
         <div>
           <p class="eyebrow">MS-DOS 6.0 Web Simulator</p>
-          <h1>面向镜像启动与仙剑 95 兼容目标的 DOS 模拟器骨架</h1>
-          <p class="summary">前端负责 Canvas 呈现与交互控制，后端负责配置、会话与镜像元信息管理，模拟器内核通过适配层接入。</p>
+          <h1>以 dos6.22.img 启动为首要目标的 Web DOS 模拟器</h1>
+          <p class="summary">前端负责 Canvas 与模拟器画面承载，后端负责镜像目录、运行时资源、会话记录与启动参数，真实 DOS 由 `v86` 接入。</p>
         </div>
         <div class="hero-status" id="hero-status">引擎未启动</div>
       </header>
@@ -20,24 +20,43 @@
       <main class="workspace">
         <section class="display-panel">
           <div class="display-toolbar">
-            <span>Canvas Display</span>
+            <span>Display Surface</span>
             <span id="runtime-mode">适配器: mock</span>
           </div>
-          <canvas id="dos-screen" width="720" height="400" aria-label="MS-DOS Canvas Display"></canvas>
+          <div class="display-stage">
+            <canvas id="dos-screen" width="720" height="400" aria-label="MS-DOS Canvas Display"></canvas>
+            <div id="v86-screen" class="v86-screen hidden" tabindex="0" aria-label="V86 Emulator Display"></div>
+          </div>
         </section>
 
         <aside class="control-panel">
           <section class="card">
             <h2>镜像载入</h2>
             <label class="field">
-              <span>镜像文件</span>
+              <span>镜像来源</span>
+              <select id="image-source">
+                <option value="server">服务端固定目录</option>
+                <option value="upload">本地上传</option>
+              </select>
+            </label>
+            <label class="field" id="server-image-field">
+              <span>服务端镜像</span>
+              <select id="server-image-select"></select>
+            </label>
+            <label class="field" id="upload-image-field">
+              <span>本地镜像</span>
               <input id="image-file" type="file" accept=".img,.ima,.vfd,.flp,.bin,.iso" />
             </label>
+            <p class="field-note">固定目录：`storage/images/`，推荐文件名：`dos6.22.img`</p>
+            <div class="status-pills">
+              <span id="image-status" class="status-pill">未选择镜像</span>
+              <span id="runtime-assets-status" class="status-pill">v86 运行时检测中</span>
+            </div>
             <label class="field">
               <span>引擎类型</span>
               <select id="adapter-select">
+                <option value="v86">V86（真实 DOS 启动）</option>
                 <option value="mock">Mock DOS（演示流程）</option>
-                <option value="v86">V86（预留真实内核接入）</option>
               </select>
             </label>
             <label class="field">
@@ -45,6 +64,7 @@
               <select id="profile-select"></select>
             </label>
             <div class="button-row">
+              <button id="refresh-images-button" type="button" class="secondary">刷新目录</button>
               <button id="boot-button" type="button">启动</button>
               <button id="reset-button" type="button" class="secondary">重置</button>
             </div>
@@ -71,13 +91,14 @@
           </section>
 
           <section class="card">
-            <h2>架构说明</h2>
+            <h2>本地文档</h2>
             <ul class="hint-list">
-              <li>当前默认使用 Mock 适配器演示完整启动链路。</li>
-              <li>真实 MS-DOS 6.0 镜像启动建议接入 `v86` 或自研 WASM 内核。</li>
-              <li>仙剑 95 目标需要补齐 VGA、键盘、定时器、XMS/EMS、SB16 与 FAT 镜像支持。</li>
+              <li>第一目标是让 `dos6.22.img` 真实启动到 DOS 命令行。</li>
+              <li>若固定目录没有镜像，也可以直接从本地上传启动。</li>
+              <li>仙剑 95 的专项兼容将在 DOS 引导稳定后继续推进。</li>
             </ul>
-            <a class="doc-link" href="/docs/architecture.md" target="_blank" rel="noreferrer">查看本地架构设计文档</a>
+            <a class="doc-link" href="/docs/dos622-boot-plan.md" target="_blank" rel="noreferrer">查看 dos6.22 启动步骤文档</a>
+            <a class="doc-link" href="/docs/architecture.md" target="_blank" rel="noreferrer">查看整体架构设计文档</a>
           </section>
 
           <section class="card">

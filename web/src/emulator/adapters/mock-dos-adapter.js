@@ -24,10 +24,14 @@ export class MockDosAdapter {
     this.terminal = terminal;
     this.options = options;
     this.running = false;
+    this.capturesKeyboard = true;
+    this.display = null;
   }
 
   async boot(context) {
     this.running = true;
+    this.display = context.display || null;
+    context.display?.showTerminal();
 
     // 步骤 1：展示 DOS 引导输出，模拟 BIOS -> DOS -> Shell 的启动链路。
     this.terminal.boot([]);
@@ -76,6 +80,7 @@ export class MockDosAdapter {
 
   async reset() {
     this.running = false;
+    this.display?.showTerminal?.();
     this.terminal.renderStatus("MS-DOS 6.0 Simulator", "请选择镜像并点击启动。");
   }
 

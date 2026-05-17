@@ -1,3 +1,5 @@
 node_modules
 .DS_Store
 storage/sessions.json
+storage/images/*
+!storage/images/.gitkeep

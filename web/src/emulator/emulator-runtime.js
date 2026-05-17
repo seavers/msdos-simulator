@@ -15,6 +15,10 @@ export class EmulatorRuntime {
   }
 
   async boot(context) {
+    if (this.currentAdapter?.destroy) {
+      await this.currentAdapter.destroy();
+    }
+
     const AdapterClass = ADAPTERS[context.adapterType] || MockDosAdapter;
     this.context = context;
     this.currentAdapter = new AdapterClass(this.terminal, context.config);
@@ -25,6 +29,7 @@ export class EmulatorRuntime {
       await this.currentAdapter.boot(context);
       this.hooks.onLifecycle("running", context);
     } catch (error) {
+      context.display?.showTerminal?.();
       this.hooks.onLifecycle("error", { ...context, error });
       this.terminal.writeLine(error.message, "#ff8e8e");
     }
@@ -35,6 +40,10 @@ export class EmulatorRuntime {
       await this.currentAdapter.reset();
     }
     this.hooks.onLifecycle("idle", this.context);
+  }
+
+  shouldCaptureKeyboard() {
+    return Boolean(this.currentAdapter?.capturesKeyboard);
   }
 
   async handleCommand(command) {

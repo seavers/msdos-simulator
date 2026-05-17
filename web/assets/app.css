@@ -9,7 +9,6 @@
   --accent: #6fd4ff;
   --accent-strong: #20a4f3;
   --success: #8ce99a;
-  --warning: #ffd166;
   --shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
   font-family: "IBM Plex Sans", "PingFang SC", "Helvetica Neue", sans-serif;
 }
@@ -57,7 +56,7 @@ body {
 
 .summary {
   margin: 12px 0 0;
-  max-width: 900px;
+  max-width: 920px;
   color: var(--muted);
   line-height: 1.6;
 }
@@ -98,6 +97,11 @@ body {
   font-size: 14px;
 }
 
+.display-stage {
+  position: relative;
+  min-height: 400px;
+}
+
 #dos-screen {
   display: block;
   width: 100%;
@@ -105,6 +109,26 @@ body {
   border-radius: 18px;
   background: #001900;
   border: 1px solid rgba(111, 212, 255, 0.12);
+}
+
+.v86-screen {
+  width: 100%;
+  min-height: 400px;
+  border-radius: 18px;
+  overflow: hidden;
+  background: #02080d;
+  border: 1px solid rgba(111, 212, 255, 0.12);
+  outline: none;
+}
+
+.v86-screen canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.hidden {
+  display: none !important;
 }
 
 .control-panel {
@@ -151,9 +175,35 @@ body {
   height: 20px;
 }
 
+.field-note {
+  margin: -4px 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.status-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid rgba(148, 188, 255, 0.12);
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 13px;
+}
+
 .button-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 12px;
   margin-top: 8px;
 }
@@ -178,7 +228,7 @@ body {
 }
 
 .doc-link {
-  display: inline-block;
+  display: block;
   margin-top: 12px;
   color: var(--accent);
 }
