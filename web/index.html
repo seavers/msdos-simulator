@@ -63,6 +63,11 @@
               <span>启动配置</span>
               <select id="profile-select"></select>
             </label>
+            <label class="field">
+              <span>扩展硬盘</span>
+              <select id="game-package-select"></select>
+            </label>
+            <p class="field-note">可选：把固定目录游戏文件打成 FAT16 数据盘并作为 `hda` 挂载。第一阶段默认支持 `pal95/` 目录。</p>
             <div class="button-row">
               <button id="refresh-images-button" type="button" class="secondary">刷新目录</button>
               <button id="pause-button" type="button" class="secondary">暂停</button>
@@ -104,6 +109,7 @@
               <li>仙剑 95 的专项兼容将在 DOS 引导稳定后继续推进。</li>
             </ul>
             <a class="doc-link" href="/docs/dos622-boot-plan.md" target="_blank" rel="noreferrer">查看 dos6.22 启动步骤文档</a>
+            <a class="doc-link" href="/docs/pal95-hdd-plan.md" target="_blank" rel="noreferrer">查看 PAL95 硬盘装载文档</a>
             <a class="doc-link" href="/docs/architecture.md" target="_blank" rel="noreferrer">查看整体架构设计文档</a>
           </section>
 

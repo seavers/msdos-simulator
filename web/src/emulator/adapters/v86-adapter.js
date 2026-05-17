@@ -26,8 +26,8 @@ export class V86Adapter {
       throw new Error("未找到 v86 屏幕容器。");
     }
 
-    // 步骤 1：根据镜像来源和驱动类型构造 v86 所需的块设备描述。
-    const driveOptions = await this.createDriveOptions(context.diskImage);
+    // 步骤 1：根据启动盘与附加盘位构造 v86 需要的块设备描述。
+    const driveOptions = await this.createDriveOptions(context.diskImage, context.attachments || []);
 
     // 步骤 2：初始化 BIOS、VGA、内存与启动顺序，真正进入 DOS 引导链路。
     this.display = context.display;
@@ -121,18 +121,44 @@ export class V86Adapter {
     this.display?.clearV86Surface?.();
   }
 
-  async createDriveOptions(diskImage) {
-    const image = diskImage.source === "upload" ? { buffer: await diskImage.file.arrayBuffer() } : { url: diskImage.url };
+  async createDriveOptions(diskImage, attachments = []) {
+    const driveOptions = {};
+    const usedSlots = new Set();
 
-    if (diskImage.driveType === "cdrom") {
-      return { cdrom: image };
+    await this.assignDiskImage(driveOptions, usedSlots, diskImage, null);
+
+    for (const attachment of attachments) {
+      await this.assignDiskImage(driveOptions, usedSlots, attachment.diskImage, attachment.preferredSlot);
     }
 
-    if (diskImage.driveType === "hardDisk") {
-      return { hda: image };
+    return driveOptions;
+  }
+
+  async assignDiskImage(driveOptions, usedSlots, diskImage, preferredSlot) {
+    const targetSlot = preferredSlot || this.pickDefaultSlot(diskImage.driveType, usedSlots);
+
+    if (usedSlots.has(targetSlot)) {
+      throw new Error(`磁盘槽位冲突: ${targetSlot}`);
     }
 
-    return { fda: image };
+    driveOptions[targetSlot] = await this.createImageDescriptor(diskImage);
+    usedSlots.add(targetSlot);
+  }
+
+  pickDefaultSlot(driveType, usedSlots) {
+    if (driveType === "cdrom") {
+      return "cdrom";
+    }
+
+    if (driveType === "hardDisk") {
+      return usedSlots.has("hda") ? "hdb" : "hda";
+    }
+
+    return usedSlots.has("fda") ? "fdb" : "fda";
+  }
+
+  async createImageDescriptor(diskImage) {
+    return diskImage.source === "upload" ? { buffer: await diskImage.file.arrayBuffer() } : { url: diskImage.url };
   }
 }
 

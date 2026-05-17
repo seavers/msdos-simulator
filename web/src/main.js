@@ -10,6 +10,7 @@ const elements = {
   heroStatus: document.querySelector("#hero-status"),
   imageSource: document.querySelector("#image-source"),
   imageStatus: document.querySelector("#image-status"),
+  gamePackageSelect: document.querySelector("#game-package-select"),
   memorySize: document.querySelector("#memory-size"),
   pauseButton: document.querySelector("#pause-button"),
   powerSaveEnabled: document.querySelector("#power-save-enabled"),
@@ -34,6 +35,7 @@ const runtime = new EmulatorRuntime(terminal, {
 
 let profiles = [];
 let serverImages = [];
+let availableGamePackages = [];
 let runtimeAssets = null;
 let activeLocalImage = null;
 let inputBuffer = "";
@@ -49,19 +51,22 @@ async function bootstrap() {
   terminal.renderStatus("MS-DOS 6.0 Simulator", "正在检测 v86 运行时与固定目录镜像...");
   syncPauseButton();
 
-  // 步骤 2：并行加载配置、固定镜像列表和 v86 运行时状态。
-  const [profileItems, diskImages, assets] = await Promise.all([
+  // 步骤 2：并行加载配置、固定镜像列表、扩展硬盘清单和 v86 运行时状态。
+  const [profileItems, diskImages, gamePackages, assets] = await Promise.all([
     fetchJson("/api/profiles"),
     fetchJson("/api/disk-images"),
+    fetchJson("/api/game-packages"),
     fetchJson("/api/runtime-assets")
   ]);
 
   profiles = profileItems;
   serverImages = diskImages;
+  availableGamePackages = gamePackages;
   runtimeAssets = assets;
 
   populateProfiles(profiles);
   populateServerImages(serverImages);
+  populateGamePackages(availableGamePackages);
   applyRuntimeAssets(runtimeAssets);
   syncImageSource();
   syncSelectedImageStatus();
@@ -166,16 +171,18 @@ async function handleBoot() {
   const selectedProfile = profiles.find((profile) => profile.id === elements.profileSelect.value) || profiles[0];
   const config = collectConfig(selectedProfile);
   const selectedImage = resolveSelectedImage();
+  const attachments = await resolveSelectedAttachments();
 
   inputBuffer = "";
   autoPauseReason = "";
   terminal.setInputBuffer("");
   elements.runtimeMode.textContent = `适配器: ${elements.adapterSelect.value}`;
 
-  appendLog(`准备启动: adapter=${elements.adapterSelect.value}, image=${selectedImage.imageMeta.name}, profile=${selectedProfile?.name || "custom"}`);
+  appendLog(`准备启动: adapter=${elements.adapterSelect.value}, image=${selectedImage.imageMeta.name}, profile=${selectedProfile?.name || "custom"}, attachments=${attachments.length}`);
 
   await runtime.boot({
     adapterType: elements.adapterSelect.value,
+    attachments,
     config,
     display,
     diskImage: selectedImage.diskImage,
@@ -228,6 +235,10 @@ function syncProfileSelection() {
   elements.memorySize.value = String(profile.memoryMb);
   elements.cpuProfile.value = profile.cpuProfile;
   elements.soundEnabled.checked = Boolean(profile.soundEnabled);
+
+  if (profile.id === "pal95" && Array.from(elements.gamePackageSelect.options).some((option) => option.value === "pal95")) {
+    elements.gamePackageSelect.value = "pal95";
+  }
 }
 
 function syncImageSource() {
@@ -267,6 +278,18 @@ function populateServerImages(items) {
 
   if (preferredImage) {
     elements.serverImageSelect.value = preferredImage.name;
+  }
+}
+
+function populateGamePackages(items) {
+  const availableItems = items.filter((item) => item.available);
+
+  elements.gamePackageSelect.innerHTML = ['<option value="">不挂载扩展硬盘</option>', ...availableItems.map((item) => `<option value="${item.id}">${item.name} · ${item.totalSizeLabel} · ${item.preferredSlot.toUpperCase()}</option>`)].join("");
+  elements.gamePackageSelect.disabled = availableItems.length === 0;
+
+  const preferredGamePackage = availableItems.find((item) => item.id === "pal95");
+  if (preferredGamePackage) {
+    elements.gamePackageSelect.value = preferredGamePackage.id;
   }
 }
 
@@ -344,6 +367,43 @@ function resolveSelectedImage() {
       driveType: activeLocalImage.driveType
     }
   };
+}
+
+async function resolveSelectedAttachments() {
+  const selectedPackageId = elements.gamePackageSelect.value;
+
+  if (!selectedPackageId) {
+    return [];
+  }
+
+  const selectedPackage = availableGamePackages.find((item) => item.id === selectedPackageId && item.available);
+
+  if (!selectedPackage) {
+    throw new Error("所选扩展硬盘不可用，请先确认 pal95 游戏目录存在。");
+  }
+
+  // 步骤 1：启动前先在服务端把游戏目录固化为 FAT16 数据盘，避免前端直接处理大量原始文件。
+  appendLog(`正在准备扩展硬盘: ${selectedPackage.name}`);
+  const materializedPackage = await fetchJson(`/api/game-packages/${encodeURIComponent(selectedPackage.id)}/materialize`, {
+    method: "POST"
+  });
+
+  appendLog(`扩展硬盘已就绪: ${materializedPackage.name} -> ${materializedPackage.mount.preferredSlot.toUpperCase()} (${materializedPackage.mount.sizeLabel})，DOS 内可切到 C: 后运行 RUNPAL 或 PAL.EXE。`);
+
+  return [
+    {
+      id: materializedPackage.id,
+      label: materializedPackage.name,
+      preferredSlot: materializedPackage.mount.preferredSlot,
+      diskImage: {
+        source: "server",
+        name: materializedPackage.mount.name,
+        size: materializedPackage.mount.size,
+        url: materializedPackage.mount.url,
+        driveType: materializedPackage.mount.driveType
+      }
+    }
+  ];
 }
 
 function syncSelectedImageStatus() {

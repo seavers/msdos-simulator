@@ -3,6 +3,7 @@ import { mkdir, open, readFile, readdir, stat, writeFile } from "node:fs/promise
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildFat16Image, describeSourceDirectory } from "./fat16-image-builder.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,10 +13,23 @@ const docsRoot = path.join(projectRoot, "docs");
 const profilesFile = path.join(projectRoot, "storage", "profiles.json");
 const sessionsFile = path.join(projectRoot, "storage", "sessions.json");
 const diskImagesRoot = path.join(projectRoot, "storage", "images");
+const generatedDiskRoot = path.join(projectRoot, "storage", "generated");
 const v86BiosRoot = path.join(projectRoot, "storage", "runtime", "v86", "bios");
 const v86PackageRoot = await resolvePackageRoot("v86/package.json");
 const v86BuildRoot = v86PackageRoot ? path.join(v86PackageRoot, "build") : null;
 const supportedDiskExtensions = new Set([".img", ".ima", ".vfd", ".flp", ".iso", ".bin"]);
+const gamePackages = [
+  {
+    id: "pal95",
+    name: "仙剑奇侠传 95",
+    sourceDirectory: "/Users/lhj/workspace/msdos-mirror/pal95",
+    volumeLabel: "PAL95",
+    imageFileName: "pal95-hdd.img",
+    metadataFileName: "pal95-hdd.json",
+    preferredSlot: "hda",
+    launchCommand: "C:\\\rPAL.EXE\r"
+  }
+];
 
 const defaultProfiles = [
   { id: "dos-default", name: "MS-DOS 6.0 默认", memoryMb: 16, cpuProfile: "486dx2", soundEnabled: true },
@@ -25,6 +39,7 @@ const defaultProfiles = [
 await ensureJsonFile(profilesFile, defaultProfiles);
 await ensureJsonFile(sessionsFile, []);
 await ensureDirectory(diskImagesRoot);
+await ensureDirectory(generatedDiskRoot);
 await ensureDirectory(v86BiosRoot);
 
 const server = createServer(async (request, response) => {
@@ -58,6 +73,17 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (url.pathname === "/api/game-packages" && request.method === "GET") {
+      sendJson(response, 200, await listGamePackages());
+      return;
+    }
+
+    if (url.pathname.startsWith("/api/game-packages/") && url.pathname.endsWith("/materialize") && request.method === "POST") {
+      const packageId = path.basename(url.pathname.replace("/materialize", ""));
+      sendJson(response, 200, await materializeGamePackage(packageId));
+      return;
+    }
+
     if (url.pathname === "/api/sessions" && request.method === "POST") {
       const payload = await readBody(request);
       const sessions = await readJson(sessionsFile, []);
@@ -83,6 +109,12 @@ const server = createServer(async (request, response) => {
     if (url.pathname.startsWith("/disk-images/")) {
       const fileName = path.basename(decodeURIComponent(url.pathname.replace("/disk-images/", "")));
       await sendFile(response, path.join(diskImagesRoot, fileName), [diskImagesRoot]);
+      return;
+    }
+
+    if (url.pathname.startsWith("/generated-disks/")) {
+      const fileName = path.basename(decodeURIComponent(url.pathname.replace("/generated-disks/", "")));
+      await sendFile(response, path.join(generatedDiskRoot, fileName), [generatedDiskRoot]);
       return;
     }
 
@@ -201,6 +233,77 @@ async function listDiskImages() {
   });
 
   return diskImages;
+}
+
+async function listGamePackages() {
+  const packages = [];
+
+  for (const gamePackage of gamePackages) {
+    const available = existsSync(gamePackage.sourceDirectory);
+    let fileCount = 0;
+    let totalSize = 0;
+
+    if (available) {
+      const description = await describeSourceDirectory(gamePackage.sourceDirectory);
+      fileCount = description.fileCount;
+      totalSize = description.totalSize;
+    }
+
+    packages.push({
+      id: gamePackage.id,
+      name: gamePackage.name,
+      available,
+      preferredSlot: gamePackage.preferredSlot,
+      sourceDirectory: gamePackage.sourceDirectory,
+      fileCount,
+      totalSize,
+      totalSizeLabel: totalSize > 0 ? formatBytes(totalSize) : "0 KB",
+      launchCommand: gamePackage.launchCommand
+    });
+  }
+
+  return packages;
+}
+
+async function materializeGamePackage(packageId) {
+  const gamePackage = gamePackages.find((item) => item.id === packageId);
+
+  if (!gamePackage) {
+    throw new Error(`未找到游戏包: ${packageId}`);
+  }
+
+  if (!existsSync(gamePackage.sourceDirectory)) {
+    throw new Error(`游戏包目录不存在: ${gamePackage.sourceDirectory}`);
+  }
+
+  const imagePath = path.join(generatedDiskRoot, gamePackage.imageFileName);
+  const metadataPath = path.join(generatedDiskRoot, gamePackage.metadataFileName);
+  const virtualFiles = [{ name: "RUNPAL.BAT", content: "@ECHO OFF\r\nPAL.EXE\r\n" }];
+
+  // 步骤 1：先把游戏目录固化成一块新的 FAT16 数据盘，保证前端拿到的始终是与当前目录同步的镜像。
+  await buildFat16Image({
+    sourceDirectory: gamePackage.sourceDirectory,
+    outputPath: imagePath,
+    metadataPath,
+    volumeLabel: gamePackage.volumeLabel,
+    virtualFiles
+  });
+
+  const imageStat = await stat(imagePath);
+
+  return {
+    id: gamePackage.id,
+    name: gamePackage.name,
+    launchCommand: gamePackage.launchCommand,
+    mount: {
+      name: gamePackage.imageFileName,
+      url: `/generated-disks/${encodeURIComponent(gamePackage.imageFileName)}`,
+      size: imageStat.size,
+      sizeLabel: formatBytes(imageStat.size),
+      driveType: "hardDisk",
+      preferredSlot: gamePackage.preferredSlot
+    }
+  };
 }
 
 async function detectBootSignature(filePath) {

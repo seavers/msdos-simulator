@@ -3,3 +3,5 @@ node_modules
 storage/sessions.json
 storage/images/*
 !storage/images/.gitkeep
+storage/generated/*
+!storage/generated/.gitkeep
