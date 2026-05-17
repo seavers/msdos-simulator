@@ -1,0 +1,16 @@
+[
+  {
+    "id": "dos-default",
+    "name": "MS-DOS 6.0 默认",
+    "memoryMb": 16,
+    "cpuProfile": "486dx2",
+    "soundEnabled": true
+  },
+  {
+    "id": "pal95",
+    "name": "仙剑 95 兼容预设",
+    "memoryMb": 16,
+    "cpuProfile": "486dx2",
+    "soundEnabled": true
+  }
+]
