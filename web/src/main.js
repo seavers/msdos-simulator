@@ -14,6 +14,7 @@ const elements = {
   memorySize: document.querySelector("#memory-size"),
   pauseButton: document.querySelector("#pause-button"),
   powerSaveEnabled: document.querySelector("#power-save-enabled"),
+  promptIdleEnabled: document.querySelector("#prompt-idle-enabled"),
   profileSelect: document.querySelector("#profile-select"),
   refreshImagesButton: document.querySelector("#refresh-images-button"),
   resetButton: document.querySelector("#reset-button"),
@@ -32,6 +33,8 @@ const display = createDisplayManager(elements.screen, elements.v86Screen);
 const runtime = new EmulatorRuntime(terminal, {
   onLifecycle: updateLifecycle
 });
+const AUTO_PAUSE_REASON_PAGE_BLUR = "页面失焦";
+const AUTO_PAUSE_REASON_DOS_PROMPT = "dos-prompt-idle";
 
 let profiles = [];
 let serverImages = [];
@@ -87,6 +90,9 @@ function bindEvents() {
   elements.pauseButton.addEventListener("click", handlePauseToggle);
   elements.powerSaveEnabled.addEventListener("change", () => {
     appendLog(elements.powerSaveEnabled.checked ? "节能模式已开启。" : "节能模式已关闭。");
+  });
+  elements.promptIdleEnabled.addEventListener("change", () => {
+    appendLog(elements.promptIdleEnabled.checked ? "DOS 提示符自动 idle 已开启。" : "DOS 提示符自动 idle 已关闭。");
   });
   elements.profileSelect.addEventListener("change", syncProfileSelection);
   elements.serverImageSelect.addEventListener("change", syncSelectedImageStatus);
@@ -186,7 +192,9 @@ async function handleBoot() {
     config,
     display,
     diskImage: selectedImage.diskImage,
+    idlePolicy: collectIdlePolicy(),
     imageMeta: selectedImage.imageMeta,
+    onAutoPauseRequested: handleAutoPauseRequested,
     onLog: appendLog,
     profile: selectedProfile,
     runtimeAssets
@@ -256,6 +264,13 @@ function collectConfig(profile = null) {
   };
 }
 
+function collectIdlePolicy() {
+  return {
+    isPageBlurAutoPauseEnabled: () => elements.powerSaveEnabled.checked,
+    isPromptAutoPauseEnabled: () => elements.promptIdleEnabled.checked
+  };
+}
+
 function populateProfiles(items) {
   const fallbackProfiles = items.length > 0 ? items : [
     { id: "dos-default", name: "MS-DOS 6.0 默认", memoryMb: 16, cpuProfile: "486dx2", soundEnabled: true },
@@ -308,7 +323,7 @@ function updateLifecycle(status, context) {
     idle: "引擎未启动",
     booting: "启动中",
     running: "运行中",
-    paused: "节能暂停",
+    paused: context?.pauseReason?.startsWith("DOS 提示符空闲") ? "提示符空闲" : "节能暂停",
     error: "启动失败"
   };
 
@@ -417,11 +432,11 @@ function syncSelectedImageStatus() {
 
 async function handleVisibilityChange() {
   if (document.hidden) {
-    await pauseForPowerSave("页面失焦");
+    await pauseForPowerSave(AUTO_PAUSE_REASON_PAGE_BLUR);
     return;
   }
 
-  if (runtime.isPaused() && autoPauseReason === "页面失焦") {
+  if (runtime.isPaused() && autoPauseReason === AUTO_PAUSE_REASON_PAGE_BLUR) {
     const resumed = await runtime.resume("页面恢复焦点");
     if (resumed) {
       autoPauseReason = "";
@@ -430,7 +445,7 @@ async function handleVisibilityChange() {
 }
 
 async function handleWindowFocus() {
-  if (runtime.isPaused() && autoPauseReason === "页面失焦") {
+  if (runtime.isPaused() && autoPauseReason === AUTO_PAUSE_REASON_PAGE_BLUR) {
     const resumed = await runtime.resume("窗口重新聚焦");
     if (resumed) {
       autoPauseReason = "";
@@ -439,7 +454,7 @@ async function handleWindowFocus() {
 }
 
 async function pauseForPowerSave(reason) {
-  if (!elements.powerSaveEnabled.checked || !runtime.isRunning()) {
+  if (!collectIdlePolicy().isPageBlurAutoPauseEnabled() || !runtime.isRunning()) {
     return;
   }
 
@@ -451,6 +466,30 @@ async function pauseForPowerSave(reason) {
   autoPauseReason = reason;
   appendLog(`已触发节能暂停: ${reason}。`);
   syncPauseButton();
+}
+
+async function handleAutoPauseRequested(reason, details = {}) {
+  if (reason === AUTO_PAUSE_REASON_DOS_PROMPT && !collectIdlePolicy().isPromptAutoPauseEnabled()) {
+    return false;
+  }
+
+  if (!runtime.isRunning() || runtime.isPaused()) {
+    return false;
+  }
+
+  const paused = await runtime.pause(details.pauseReason || reason);
+  if (!paused) {
+    return false;
+  }
+
+  autoPauseReason = reason;
+
+  if (details.logMessage) {
+    appendLog(details.logMessage);
+  }
+
+  syncPauseButton();
+  return true;
 }
 
 function syncPauseButton() {

@@ -98,7 +98,11 @@
               <input id="power-save-enabled" type="checkbox" checked />
               <span>启用节能模式（页面失焦自动暂停）</span>
             </label>
-            <p class="field-note">节能模式会在页面失焦时自动暂停模拟器，恢复焦点后自动继续。前台停在 DOS 提示符时若仍然高 CPU，需要客体系统侧配合 `DOSIdle` 一类 idle 工具。</p>
+            <label class="field checkbox">
+              <input id="prompt-idle-enabled" type="checkbox" checked />
+              <span>启用 DOS 提示符自动 idle（识别 `A:\>` / `C:\>`）</span>
+            </label>
+            <p class="field-note">页面失焦时会自动暂停，恢复焦点后自动继续；另外会结合 `wait_until_vga_screen_contains()` 与 `screen-put-char` 监听，在屏幕出现 `A:\>` 或 `C:\>` 时自动 idle 暂停。</p>
           </section>
 
           <section class="card">
