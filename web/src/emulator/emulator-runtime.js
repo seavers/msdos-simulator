@@ -42,6 +42,38 @@ export class EmulatorRuntime {
     this.hooks.onLifecycle("idle", this.context);
   }
 
+  isRunning() {
+    return Boolean(this.currentAdapter?.isRunning?.());
+  }
+
+  isPaused() {
+    return Boolean(this.currentAdapter?.isPaused?.());
+  }
+
+  async pause(reason = "") {
+    if (!this.currentAdapter?.pause) {
+      return false;
+    }
+
+    const paused = await this.currentAdapter.pause(reason);
+    if (paused) {
+      this.hooks.onLifecycle("paused", { ...this.context, pauseReason: reason });
+    }
+    return paused;
+  }
+
+  async resume(reason = "") {
+    if (!this.currentAdapter?.resume) {
+      return false;
+    }
+
+    const resumed = await this.currentAdapter.resume(reason);
+    if (resumed) {
+      this.hooks.onLifecycle("running", { ...this.context, resumeReason: reason });
+    }
+    return resumed;
+  }
+
   shouldCaptureKeyboard() {
     return Boolean(this.currentAdapter?.capturesKeyboard);
   }

@@ -7,6 +7,7 @@ export class V86Adapter {
     this.capturesKeyboard = false;
     this.display = null;
     this.emulator = null;
+    this.paused = false;
   }
 
   async boot(context) {
@@ -48,6 +49,7 @@ export class V86Adapter {
       disable_speaker: !context.config.soundEnabled,
       ...driveOptions
     });
+    this.paused = false;
 
     // 步骤 3：注册关键事件，便于观察 DOS 引导进度和画面模式切换。
     this.emulator.add_listener("emulator-ready", () => {
@@ -74,6 +76,35 @@ export class V86Adapter {
     this.terminal.renderStatus("MS-DOS 6.0 Simulator", "请选择镜像并点击启动。");
   }
 
+  async pause() {
+    if (!this.emulator || this.paused || !this.emulator.is_running()) {
+      return false;
+    }
+
+    await this.emulator.stop();
+    this.paused = true;
+    return true;
+  }
+
+  async resume() {
+    if (!this.emulator || !this.paused) {
+      return false;
+    }
+
+    await this.emulator.run();
+    this.paused = false;
+    this.display?.focusV86Surface?.();
+    return true;
+  }
+
+  isRunning() {
+    return Boolean(this.emulator && this.emulator.is_running());
+  }
+
+  isPaused() {
+    return this.paused;
+  }
+
   async destroy() {
     if (!this.emulator) {
       this.display?.clearV86Surface?.();
@@ -86,6 +117,7 @@ export class V86Adapter {
 
     await this.emulator.destroy().catch(() => undefined);
     this.emulator = null;
+    this.paused = false;
     this.display?.clearV86Surface?.();
   }
 

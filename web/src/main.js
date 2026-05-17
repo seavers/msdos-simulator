@@ -11,6 +11,8 @@ const elements = {
   imageSource: document.querySelector("#image-source"),
   imageStatus: document.querySelector("#image-status"),
   memorySize: document.querySelector("#memory-size"),
+  pauseButton: document.querySelector("#pause-button"),
+  powerSaveEnabled: document.querySelector("#power-save-enabled"),
   profileSelect: document.querySelector("#profile-select"),
   refreshImagesButton: document.querySelector("#refresh-images-button"),
   resetButton: document.querySelector("#reset-button"),
@@ -35,6 +37,7 @@ let serverImages = [];
 let runtimeAssets = null;
 let activeLocalImage = null;
 let inputBuffer = "";
+let autoPauseReason = "";
 
 bootstrap().catch((error) => {
   appendLog(`初始化失败: ${error.message}`);
@@ -44,6 +47,7 @@ async function bootstrap() {
   // 步骤 1：先建立事件和默认待机画面，让页面可以在异步资源返回前就绪。
   bindEvents();
   terminal.renderStatus("MS-DOS 6.0 Simulator", "正在检测 v86 运行时与固定目录镜像...");
+  syncPauseButton();
 
   // 步骤 2：并行加载配置、固定镜像列表和 v86 运行时状态。
   const [profileItems, diskImages, assets] = await Promise.all([
@@ -75,14 +79,23 @@ async function bootstrap() {
 function bindEvents() {
   elements.fileInput.addEventListener("change", handleFileSelected);
   elements.imageSource.addEventListener("change", syncImageSource);
+  elements.pauseButton.addEventListener("click", handlePauseToggle);
+  elements.powerSaveEnabled.addEventListener("change", () => {
+    appendLog(elements.powerSaveEnabled.checked ? "节能模式已开启。" : "节能模式已关闭。");
+  });
   elements.profileSelect.addEventListener("change", syncProfileSelection);
   elements.serverImageSelect.addEventListener("change", syncSelectedImageStatus);
   elements.adapterSelect.addEventListener("change", () => {
     elements.runtimeMode.textContent = `适配器: ${elements.adapterSelect.value}`;
+    syncPauseButton();
   });
   elements.refreshImagesButton.addEventListener("click", refreshServerImages);
   elements.bootButton.addEventListener("click", handleBoot);
   elements.resetButton.addEventListener("click", handleReset);
+
+  // 步骤 4：仅在页面失焦时触发自动节能暂停，保证行为稳定可预期。
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  window.addEventListener("focus", handleWindowFocus);
 
   window.addEventListener("keydown", async (event) => {
     if (!["Backspace", "Enter"].includes(event.key) && event.key.length !== 1) {
@@ -155,6 +168,7 @@ async function handleBoot() {
   const selectedImage = resolveSelectedImage();
 
   inputBuffer = "";
+  autoPauseReason = "";
   terminal.setInputBuffer("");
   elements.runtimeMode.textContent = `适配器: ${elements.adapterSelect.value}`;
 
@@ -170,13 +184,31 @@ async function handleBoot() {
     profile: selectedProfile,
     runtimeAssets
   });
+
+  syncPauseButton();
 }
 
 async function handleReset() {
   inputBuffer = "";
+  autoPauseReason = "";
   terminal.setInputBuffer("");
   await runtime.reset();
+  syncPauseButton();
   appendLog("会话已重置。");
+}
+
+async function handlePauseToggle() {
+  if (runtime.isPaused()) {
+    autoPauseReason = "";
+    await runtime.resume("手动恢复");
+    appendLog("模拟器已手动恢复。");
+  } else if (runtime.isRunning()) {
+    autoPauseReason = "";
+    await runtime.pause("手动暂停");
+    appendLog("模拟器已手动暂停。");
+  }
+
+  syncPauseButton();
 }
 
 async function refreshServerImages() {
@@ -253,13 +285,25 @@ function updateLifecycle(status, context) {
     idle: "引擎未启动",
     booting: "启动中",
     running: "运行中",
+    paused: "节能暂停",
     error: "启动失败"
   };
 
   elements.heroStatus.textContent = labels[status] || status;
+  syncPauseButton();
 
   if (status === "error" && context?.error) {
     appendLog(`启动失败: ${context.error.message}`);
+    return;
+  }
+
+  if (status === "paused" && context?.pauseReason) {
+    appendLog(`生命周期切换: paused (${context.pauseReason})`);
+    return;
+  }
+
+  if (status === "running" && context?.resumeReason) {
+    appendLog(`生命周期切换: running (${context.resumeReason})`);
     return;
   }
 
@@ -309,6 +353,55 @@ function syncSelectedImageStatus() {
   } catch (error) {
     elements.imageStatus.textContent = error.message.replace("Error: ", "");
   }
+}
+
+async function handleVisibilityChange() {
+  if (document.hidden) {
+    await pauseForPowerSave("页面失焦");
+    return;
+  }
+
+  if (runtime.isPaused() && autoPauseReason === "页面失焦") {
+    const resumed = await runtime.resume("页面恢复焦点");
+    if (resumed) {
+      autoPauseReason = "";
+    }
+  }
+}
+
+async function handleWindowFocus() {
+  if (runtime.isPaused() && autoPauseReason === "页面失焦") {
+    const resumed = await runtime.resume("窗口重新聚焦");
+    if (resumed) {
+      autoPauseReason = "";
+    }
+  }
+}
+
+async function pauseForPowerSave(reason) {
+  if (!elements.powerSaveEnabled.checked || !runtime.isRunning()) {
+    return;
+  }
+
+  const paused = await runtime.pause(reason);
+  if (!paused) {
+    return;
+  }
+
+  autoPauseReason = reason;
+  appendLog(`已触发节能暂停: ${reason}。`);
+  syncPauseButton();
+}
+
+function syncPauseButton() {
+  if (!runtime.currentAdapter) {
+    elements.pauseButton.textContent = "暂停";
+    elements.pauseButton.disabled = true;
+    return;
+  }
+
+  elements.pauseButton.disabled = elements.adapterSelect.value !== "v86";
+  elements.pauseButton.textContent = runtime.isPaused() ? "继续" : "暂停";
 }
 
 function appendLog(message) {
@@ -374,6 +467,9 @@ function createDisplayManager(canvas, v86Screen) {
     },
     clearV86Surface() {
       v86Screen.innerHTML = "";
+    },
+    focusV86Surface() {
+      v86Screen.focus();
     }
   };
 }
