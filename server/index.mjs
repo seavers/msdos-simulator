@@ -22,7 +22,7 @@ const gamePackages = [
   {
     id: "pal95",
     name: "仙剑奇侠传 95",
-    sourceDirectory: "/Users/lhj/workspace/msdos-mirror/pal95",
+    sourceDirectory: "./download/pal95",
     volumeLabel: "PAL95",
     imageFileName: "pal95-hdd.img",
     metadataFileName: "pal95-hdd.json",

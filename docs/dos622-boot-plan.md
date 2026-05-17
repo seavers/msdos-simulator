@@ -103,7 +103,7 @@ storage/runtime/v86/bios/
 
 完成本轮代码后，推荐按下面方式使用：
 
-1. 把 `dos6.22.img` 放到 [storage/images/.gitkeep](/Users/lhj/workspace/msdos-simulator/storage/images/.gitkeep) 同级目录下，命名为 `dos6.22.img`。
+1. 把 `dos6.22.img` 放到 [storage/images/.gitkeep](./storage/images/.gitkeep) 同级目录下，命名为 `dos6.22.img`。
 2. 启动本地服务。
 3. 打开页面，镜像来源切到“服务端固定目录”。
 4. 选择 `dos6.22.img`。
