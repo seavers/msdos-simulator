@@ -4,6 +4,7 @@ const DOS_PROMPT_PATTERN = /^[AC]:\\>\s*$/;
 const DOS_PROMPT_WAIT_TIMEOUT_MSEC = 1500;
 const DOS_PROMPT_SCAN_DEBOUNCE_MSEC = 120;
 const DOS_PROMPT_RESUME_GRACE_MSEC = 3000;
+const STARTUP_AUTOMATION_SETTLE_MSEC = 250;
 
 export class V86Adapter {
   constructor(terminal) {
@@ -17,6 +18,8 @@ export class V86Adapter {
     this.promptMonitorTimer = null;
     this.promptMonitorListener = null;
     this.promptIdleSnoozedUntil = 0;
+    this.startupAutomationGeneration = 0;
+    this.pendingStartupAutomation = null;
   }
 
   async boot(context) {
@@ -38,6 +41,8 @@ export class V86Adapter {
 
     // 步骤 1：根据启动盘与附加盘位构造 v86 需要的块设备描述。
     const driveOptions = await this.createDriveOptions(context.diskImage, context.attachments || []);
+    const cpuOptions = resolveCpuOptions(context.config.cpuProfile);
+    this.pendingStartupAutomation = normalizeStartupAutomation(context.startupAutomation);
 
     // 步骤 2：初始化 BIOS、VGA、内存与启动顺序，真正进入 DOS 引导链路。
     this.display = context.display;
@@ -55,8 +60,10 @@ export class V86Adapter {
       },
       boot_order: BOOT_ORDER_FLOPPY_FIRST,
       autostart: true,
+      fastboot: true,
       disable_mouse: true,
       disable_speaker: !context.config.soundEnabled,
+      ...cpuOptions,
       ...driveOptions
     });
     this.paused = false;
@@ -64,6 +71,7 @@ export class V86Adapter {
     // 步骤 3：注册关键事件，便于观察 DOS 引导进度和画面模式切换。
     this.emulator.add_listener("emulator-ready", () => {
       context.onLog?.(`v86 已就绪，准备从 ${context.diskImage.driveType} 设备启动 ${context.diskImage.name}`);
+      context.onLog?.(`兼容配置已生效: memory=${context.config.memoryMb}MB, cpu=${cpuOptions.label}, sound=${context.config.soundEnabled ? "on" : "off"}`);
     });
 
     this.emulator.add_listener("emulator-started", () => {
@@ -75,7 +83,12 @@ export class V86Adapter {
       context.onLog?.(`VGA 模式切换: ${width}x${height}x${bpp}`);
     });
 
-    // 步骤 4：结合 wait_until_vga_screen_contains 和 screen-put-char，对 DOS 文本提示符进行被动感知与自动 idle。
+    this.emulator.add_listener("download-error", (detail) => {
+      context.onLog?.(`镜像资源加载失败: ${detail.file_name}`);
+    });
+
+    // 步骤 4：在 DOS 提示符出现时优先执行启动编排，再做提示符 idle 暂停。
+    this.installStartupAutomation();
     this.installPromptIdleMonitor();
   }
 
@@ -120,6 +133,7 @@ export class V86Adapter {
   }
 
   async destroy() {
+    this.teardownStartupAutomation();
     this.teardownPromptIdleMonitor();
 
     if (!this.emulator) {
@@ -177,6 +191,46 @@ export class V86Adapter {
 
   async createImageDescriptor(diskImage) {
     return diskImage.source === "upload" ? { buffer: await diskImage.file.arrayBuffer() } : { url: diskImage.url };
+  }
+
+  installStartupAutomation() {
+    this.cancelStartupAutomationLoop();
+
+    if (!this.emulator || !this.hasPendingStartupAutomation()) {
+      return;
+    }
+
+    this.startupAutomationGeneration += 1;
+    const generation = this.startupAutomationGeneration;
+    this.context?.onLog?.(`已启用自动启动编排，等待 DOS 提示符后执行 ${this.pendingStartupAutomation.label}。`);
+    this.startStartupAutomationLoop(generation);
+  }
+
+  teardownStartupAutomation() {
+    this.cancelStartupAutomationLoop();
+    this.pendingStartupAutomation = null;
+  }
+
+  cancelStartupAutomationLoop() {
+    this.startupAutomationGeneration += 1;
+  }
+
+  hasPendingStartupAutomation() {
+    return Boolean(this.pendingStartupAutomation?.commandText);
+  }
+
+  async startStartupAutomationLoop(generation) {
+    while (this.emulator && generation === this.startupAutomationGeneration && this.hasPendingStartupAutomation()) {
+      const promptFound = await this.emulator.wait_until_vga_screen_contains(DOS_PROMPT_PATTERN, {
+        timeout_msec: DOS_PROMPT_WAIT_TIMEOUT_MSEC
+      });
+
+      if (generation !== this.startupAutomationGeneration || !this.emulator || !promptFound) {
+        continue;
+      }
+
+      await this.tryRunStartupAutomation();
+    }
   }
 
   installPromptIdleMonitor() {
@@ -255,6 +309,10 @@ export class V86Adapter {
       return false;
     }
 
+    if (this.hasPendingStartupAutomation()) {
+      return false;
+    }
+
     if (performance.now() < this.promptIdleSnoozedUntil) {
       return false;
     }
@@ -270,6 +328,33 @@ export class V86Adapter {
       logMessage: `检测到 DOS 文本提示符 ${matchedPrompt}，已自动进入 idle 暂停。`,
       source
     }));
+  }
+
+  async tryRunStartupAutomation() {
+    if (!this.emulator || this.paused || !this.emulator.is_running() || !this.hasPendingStartupAutomation()) {
+      return false;
+    }
+
+    const matchedPrompt = this.readPromptFromScreen();
+    if (!matchedPrompt) {
+      return false;
+    }
+
+    const automation = this.pendingStartupAutomation;
+    this.pendingStartupAutomation = null;
+    this.snoozePromptIdleMonitor();
+    this.display?.focusV86Surface?.();
+    this.context?.onLog?.(`检测到 DOS 提示符 ${matchedPrompt}，开始执行 ${automation.label}。`);
+    await sleep(STARTUP_AUTOMATION_SETTLE_MSEC);
+
+    if (!this.emulator || this.paused || !this.emulator.is_running()) {
+      this.pendingStartupAutomation = automation;
+      return false;
+    }
+
+    this.emulator.keyboard_send_text(automation.commandText);
+    this.context?.onLog?.(`已向 DOS 注入启动命令: ${automation.description}`);
+    return true;
   }
 
   readPromptFromScreen() {
@@ -294,6 +379,36 @@ export class V86Adapter {
     const policy = this.context?.idlePolicy?.isPromptAutoPauseEnabled;
     return typeof policy === "function" ? policy() : Boolean(policy);
   }
+}
+
+function resolveCpuOptions(cpuProfile) {
+  if (cpuProfile === "386sx") {
+    return { label: "386SX / CPUID-3", cpuid_level: 3 };
+  }
+
+  if (cpuProfile === "pentium") {
+    return { label: "Pentium / CPUID-5", cpuid_level: 5 };
+  }
+
+  return { label: "486DX2 / CPUID-4", cpuid_level: 4 };
+}
+
+function normalizeStartupAutomation(startupAutomation) {
+  if (!startupAutomation?.commandText) {
+    return null;
+  }
+
+  const compactCommand = startupAutomation.commandText.replace(/\r/g, " -> ").trim();
+
+  return {
+    label: startupAutomation.label || "自动启动",
+    description: compactCommand,
+    commandText: startupAutomation.commandText
+  };
+}
+
+function sleep(timeoutMsec) {
+  return new Promise((resolve) => window.setTimeout(resolve, timeoutMsec));
 }
 
 async function loadV86Module() {

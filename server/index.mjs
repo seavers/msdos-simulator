@@ -27,7 +27,14 @@ const gamePackages = [
     imageFileName: "pal95-hdd.img",
     metadataFileName: "pal95-hdd.json",
     preferredSlot: "hda",
-    launchCommand: "C:\\\rPAL.EXE\r"
+    launchCommand: "C:\\\rRUNPAL\r",
+    compatibility: {
+      storage: { level: "ready", summary: "已支持把 pal95 目录固化为 FAT16 数据盘，并以 hda 方式挂载到 DOS。" },
+      memory: { level: "ready", summary: "已支持把总内存参数传给 v86；XMS/EMS 仍取决于 dos 启动镜像中的 CONFIG.SYS/AUTOEXEC.BAT。" },
+      vga: { level: "ready", summary: "已支持 VGA BIOS 与图形模式切换，前端会记录分辨率/色深变化，便于观察 320x200 256 色进入情况。" },
+      sound: { level: "partial", summary: "已暴露 SB16 / AdLib 开关和 BLASTER 启动环境，仍需结合游戏内声音测试继续确认 IRQ/DMA 兼容。" },
+      timing: { level: "partial", summary: "当前依赖 v86 的 PIT/CPU 调度，已适合首轮验证；若存在动画或音乐速度异常，需要继续做专项时序调优。" }
+    }
   }
 ];
 
@@ -258,7 +265,8 @@ async function listGamePackages() {
       fileCount,
       totalSize,
       totalSizeLabel: totalSize > 0 ? formatBytes(totalSize) : "0 KB",
-      launchCommand: gamePackage.launchCommand
+      launchCommand: gamePackage.launchCommand,
+      compatibility: gamePackage.compatibility
     });
   }
 
@@ -278,7 +286,37 @@ async function materializeGamePackage(packageId) {
 
   const imagePath = path.join(generatedDiskRoot, gamePackage.imageFileName);
   const metadataPath = path.join(generatedDiskRoot, gamePackage.metadataFileName);
-  const virtualFiles = [{ name: "RUNPAL.BAT", content: "@ECHO OFF\r\nPAL.EXE\r\n" }];
+  const virtualFiles = [
+    {
+      name: "RUNPAL.BAT",
+      content: ["@ECHO OFF", "SET BLASTER=A220 I7 D1 H5 T6", "SET SOUND=C:\\", "SET MIDI=SYNTH:1 MAP:E MODE:0", "PAL.EXE"].join("\r\n") + "\r\n"
+    },
+    {
+      name: "PALDIAG.BAT",
+      content: [
+        "@ECHO OFF",
+        "ECHO PAL95 DOS 兼容诊断",
+        "ECHO ------------------------------",
+        "VER",
+        "MEM",
+        "SET BLASTER",
+        "DIR PAL.EXE",
+        "ECHO.",
+        "ECHO 建议先执行 RUNPAL，再观察是否进入 320x200 256 色与声音初始化。"
+      ].join("\r\n") + "\r\n"
+    },
+    {
+      name: "PALREADME.TXT",
+      content: [
+        "PAL95 DOS 模拟提示",
+        "",
+        "1. 先执行 PALDIAG 查看 DOS 内存与 BLASTER 环境。",
+        "2. 再执行 RUNPAL 进入游戏。",
+        "3. 若黑屏或卡死，重点关注 VGA 模式切换日志。",
+        "4. 若无声，优先检查游戏内的 SB16/AdLib 选择与中断设置。"
+      ].join("\r\n") + "\r\n"
+    }
+  ];
 
   // 步骤 1：先把游戏目录固化成一块新的 FAT16 数据盘，保证前端拿到的始终是与当前目录同步的镜像。
   await buildFat16Image({
@@ -295,6 +333,7 @@ async function materializeGamePackage(packageId) {
     id: gamePackage.id,
     name: gamePackage.name,
     launchCommand: gamePackage.launchCommand,
+    compatibility: gamePackage.compatibility,
     mount: {
       name: gamePackage.imageFileName,
       url: `/generated-disks/${encodeURIComponent(gamePackage.imageFileName)}`,

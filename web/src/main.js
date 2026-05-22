@@ -24,6 +24,7 @@ const elements = {
   serverImageField: document.querySelector("#server-image-field"),
   serverImageSelect: document.querySelector("#server-image-select"),
   soundEnabled: document.querySelector("#sound-enabled"),
+  autoLaunchEnabled: document.querySelector("#auto-launch-enabled"),
   uploadImageField: document.querySelector("#upload-image-field"),
   v86Screen: document.querySelector("#v86-screen")
 };
@@ -113,6 +114,7 @@ function bindEvents() {
   elements.memorySize.addEventListener("change", saveSettings);
   elements.cpuProfile.addEventListener("change", saveSettings);
   elements.soundEnabled.addEventListener("change", saveSettings);
+  elements.autoLaunchEnabled.addEventListener("change", saveSettings);
   elements.refreshImagesButton.addEventListener("click", refreshServerImages);
   elements.bootButton.addEventListener("click", handleBoot);
   elements.resetButton.addEventListener("click", handleReset);
@@ -191,6 +193,7 @@ async function handleBoot() {
   const config = collectConfig(selectedProfile);
   const selectedImage = resolveSelectedImage();
   const attachments = await resolveSelectedAttachments();
+  const startupAutomation = resolveStartupAutomation(attachments, config);
 
   inputBuffer = "";
   autoPauseReason = "";
@@ -198,6 +201,7 @@ async function handleBoot() {
   elements.runtimeMode.textContent = `适配器: ${elements.adapterSelect.value}`;
 
   appendLog(`准备启动: adapter=${elements.adapterSelect.value}, image=${selectedImage.imageMeta.name}, profile=${selectedProfile?.name || "custom"}, attachments=${attachments.length}`);
+  appendCompatibilityLogs(attachments);
 
   await runtime.boot({
     adapterType: elements.adapterSelect.value,
@@ -210,7 +214,8 @@ async function handleBoot() {
     onAutoPauseRequested: handleAutoPauseRequested,
     onLog: appendLog,
     profile: selectedProfile,
-    runtimeAssets
+    runtimeAssets,
+    startupAutomation
   });
 
   syncPauseButton();
@@ -259,6 +264,7 @@ function syncProfileSelection() {
 
   if (profile.id === "pal95" && Array.from(elements.gamePackageSelect.options).some((option) => option.value === "pal95")) {
     elements.gamePackageSelect.value = "pal95";
+    elements.autoLaunchEnabled.checked = true;
   }
 }
 
@@ -273,7 +279,8 @@ function collectConfig(profile = null) {
   return {
     memoryMb: Number(elements.memorySize.value || profile?.memoryMb || 16),
     cpuProfile: elements.cpuProfile.value || profile?.cpuProfile || "486dx2",
-    soundEnabled: elements.soundEnabled.checked
+    soundEnabled: elements.soundEnabled.checked,
+    autoLaunchEnabled: elements.autoLaunchEnabled.checked
   };
 }
 
@@ -422,6 +429,8 @@ async function resolveSelectedAttachments() {
     {
       id: materializedPackage.id,
       label: materializedPackage.name,
+      launchCommand: materializedPackage.launchCommand,
+      compatibility: materializedPackage.compatibility,
       preferredSlot: materializedPackage.mount.preferredSlot,
       diskImage: {
         source: "server",
@@ -568,6 +577,7 @@ function saveSettings() {
     memorySize: elements.memorySize.value,
     cpuProfile: elements.cpuProfile.value,
     soundEnabled: elements.soundEnabled.checked,
+    autoLaunchEnabled: elements.autoLaunchEnabled.checked,
     powerSaveEnabled: elements.powerSaveEnabled.checked,
     promptIdleEnabled: elements.promptIdleEnabled.checked
   };
@@ -626,6 +636,10 @@ function loadSettings() {
     elements.soundEnabled.checked = settings.soundEnabled;
   }
 
+  if (typeof settings.autoLaunchEnabled === "boolean") {
+    elements.autoLaunchEnabled.checked = settings.autoLaunchEnabled;
+  }
+
   if (typeof settings.powerSaveEnabled === "boolean") {
     elements.powerSaveEnabled.checked = settings.powerSaveEnabled;
   }
@@ -635,6 +649,34 @@ function loadSettings() {
   }
 
   syncSelectedImageStatus();
+}
+
+function resolveStartupAutomation(attachments, config) {
+  if (!config.autoLaunchEnabled) {
+    return null;
+  }
+
+  const autoLaunchAttachment = attachments.find((attachment) => attachment.launchCommand);
+
+  if (!autoLaunchAttachment) {
+    return null;
+  }
+
+  return {
+    label: `${autoLaunchAttachment.label} 自动启动`,
+    commandText: autoLaunchAttachment.launchCommand
+  };
+}
+
+function appendCompatibilityLogs(attachments) {
+  for (const attachment of attachments) {
+    if (!attachment.compatibility) {
+      continue;
+    }
+
+    const compatibilityLines = Object.entries(attachment.compatibility).map(([key, item]) => `${key}=${item.level}`);
+    appendLog(`兼容性画像: ${attachment.label} -> ${compatibilityLines.join(", ")}`);
+  }
 }
 
 function createDisplayManager(canvas, v86Screen) {
