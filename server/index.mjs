@@ -17,6 +17,8 @@ const profilesFile = path.join(projectRoot, "storage", "profiles.json");
 const sessionsFile = path.join(projectRoot, "storage", "sessions.json");
 const diskImagesRoot = path.join(projectRoot, "storage", "images");
 const generatedDiskRoot = path.join(projectRoot, "storage", "generated");
+const startupFloppyRoot = path.join(projectRoot, "storage", "startupFloppyDisk");
+const startupFloppyIndexFile = path.join(startupFloppyRoot, "index.json");
 const v86BiosRoot = path.join(projectRoot, "storage", "runtime", "v86", "bios");
 const v86PackageRoot = await resolvePackageRoot("v86/package.json");
 const v86BuildRoot = v86PackageRoot ? path.join(v86PackageRoot, "build") : null;
@@ -52,6 +54,8 @@ await ensureJsonFile(profilesFile, defaultProfiles);
 await ensureJsonFile(sessionsFile, []);
 await ensureDirectory(diskImagesRoot);
 await ensureDirectory(generatedDiskRoot);
+await ensureDirectory(startupFloppyRoot);
+await ensureJsonFile(startupFloppyIndexFile, []);
 await ensureDirectory(v86BiosRoot);
 
 const server = createServer(async (request, response) => {
@@ -80,8 +84,19 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (url.pathname === "/api/disk-images" && request.method === "GET") {
-      sendJson(response, 200, await listDiskImages());
+    if (url.pathname === "/api/base-disk-images" && request.method === "GET") {
+      sendJson(response, 200, await listBaseDiskImages());
+      return;
+    }
+
+    if (url.pathname === "/api/startup-disks" && request.method === "GET") {
+      sendJson(response, 200, await listStartupDisks());
+      return;
+    }
+
+    if (url.pathname === "/api/startup-disks" && request.method === "POST") {
+      const payload = await readBody(request);
+      sendJson(response, 201, await createStartupDisk(payload));
       return;
     }
 
@@ -94,13 +109,6 @@ const server = createServer(async (request, response) => {
       const packageId = path.basename(url.pathname.replace("/materialize", ""));
       const payload = await readBody(request);
       sendJson(response, 200, await materializeGamePackage(packageId, payload));
-      return;
-    }
-
-    if (url.pathname.startsWith("/api/game-packages/") && url.pathname.endsWith("/materialize-boot") && request.method === "POST") {
-      const packageId = path.basename(url.pathname.replace("/materialize-boot", ""));
-      const payload = await readBody(request);
-      sendJson(response, 200, await materializeGameBootDisk(packageId, payload));
       return;
     }
 
@@ -135,6 +143,12 @@ const server = createServer(async (request, response) => {
     if (url.pathname.startsWith("/generated-disks/")) {
       const fileName = path.basename(decodeURIComponent(url.pathname.replace("/generated-disks/", "")));
       await sendFile(response, path.join(generatedDiskRoot, fileName), [generatedDiskRoot]);
+      return;
+    }
+
+    if (url.pathname.startsWith("/startup-floppy-disks/")) {
+      const fileName = path.basename(decodeURIComponent(url.pathname.replace("/startup-floppy-disks/", "")));
+      await sendFile(response, path.join(startupFloppyRoot, fileName), [startupFloppyRoot]);
       return;
     }
 
@@ -214,13 +228,35 @@ async function readBody(request) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-async function listDiskImages() {
-  const diskImages = [
-    ...await collectDiskImages(diskImagesRoot, "/disk-images/", "storage/images"),
-    ...await collectDiskImages(generatedDiskRoot, "/generated-disks/", "storage/generated")
-  ];
-
+async function listBaseDiskImages() {
+  const diskImages = await collectDiskImages(diskImagesRoot, "/disk-images/", "storage/images");
   return sortDiskImages(diskImages).map(({ filePath, ...diskImage }) => diskImage);
+}
+
+async function listStartupDisks() {
+  const records = await readJson(startupFloppyIndexFile, []);
+  const startupDisks = [];
+
+  // 步骤 1：按索引逐个校验磁盘文件仍然存在，并把动态大小、时间等信息补齐返回给前端。
+  for (const record of records) {
+    const imagePath = path.join(startupFloppyRoot, record.imageFileName);
+
+    if (!existsSync(imagePath)) {
+      continue;
+    }
+
+    const fileStat = await stat(imagePath);
+    startupDisks.push({
+      ...buildStartupDiskPayload(record),
+      size: fileStat.size,
+      sizeLabel: formatBytes(fileStat.size),
+      updatedAt: fileStat.mtime.toISOString(),
+      hasBootSignature: await detectBootSignature(imagePath),
+      driveType: inferDriveType(record.imageFileName, fileStat.size)
+    });
+  }
+
+  return startupDisks.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
 function sortDiskImages(diskImages) {
@@ -380,58 +416,80 @@ async function materializeGamePackage(packageId, options = {}) {
   };
 }
 
-async function materializeGameBootDisk(packageId, options = {}) {
-  const gamePackage = gamePackages.find((item) => item.id === packageId);
+async function createStartupDisk(options = {}) {
+  const normalizedOptions = normalizeStartupDiskOptions(options);
+  const baseImage = await resolveBaseDiskImageByName(normalizedOptions.baseImageName);
+  const selectedPackage = normalizedOptions.packageId ? gamePackages.find((item) => item.id === normalizedOptions.packageId) : null;
 
-  if (!gamePackage) {
-    throw new Error(`未找到游戏包: ${packageId}`);
+  if (normalizedOptions.packageId && !selectedPackage) {
+    throw new Error(`未找到游戏包: ${normalizedOptions.packageId}`);
   }
 
-  const baseImage = await resolveDiskImageByName(options.baseImageName || defaultBootDiskImageName);
-  const launchSoundEnabled = Boolean(options.soundEnabled);
-  const imageFileName = launchSoundEnabled ? `${packageId}-boot-sound.img` : `${packageId}-boot-safe.img`;
-  const imagePath = path.join(generatedDiskRoot, imageFileName);
-  const tempRoot = await mkdtemp(path.join(tmpdir(), `${packageId}-boot-`));
+  if (normalizedOptions.autoRunGame && !selectedPackage) {
+    throw new Error("自动执行游戏前，请先选择一个扩展硬盘游戏包。");
+  }
+
+  const imageFileName = buildStartupDiskFileName(normalizedOptions.displayName || selectedPackage?.name || baseImage.name);
+  const imagePath = path.join(startupFloppyRoot, imageFileName);
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "startup-floppy-"));
   const configPath = path.join(tempRoot, "CONFIG.SYS");
   const autoexecPath = path.join(tempRoot, "AUTOEXEC.BAT");
-
-  logServerStep(packageId, `开始生成启动盘，base=${baseImage.filePath}`);
-  logServerStep(packageId, `输出启动盘: ${imagePath}`);
+  logServerStep("startup", `开始生成启动盘，基础盘=${baseImage.filePath}`);
+  logServerStep("startup", `输出目录: ${startupFloppyRoot}`);
+  logServerStep("startup", `输出镜像: ${imagePath}`);
+  logServerStep("startup", `索引文件: ${startupFloppyIndexFile}`);
 
   try {
-    // 步骤 1：复制用户当前选中的基础盘，保留现有 DOS 环境与 DOSIDLE 配置。
+    // 步骤 1：先复制一份基础盘，后续所有加工都在新镜像上完成，避免污染原始盘。
     await copyFile(baseImage.filePath, imagePath);
 
-    // 步骤 2：仅覆盖仙剑启动所需的最小 AUTOEXEC，允许用户后续手动在页面中选中该盘启动。
-    await writeFile(configPath, buildPal95ConfigSys(), "ascii");
-    await writeFile(autoexecPath, buildPal95AutoexecBat(launchSoundEnabled), "ascii");
-    logServerStep(packageId, `临时 CONFIG.SYS: ${configPath}`);
-    logServerStep(packageId, `临时 AUTOEXEC.BAT: ${autoexecPath}`);
+    // 步骤 2：根据勾选参数生成最小启动配置，只覆盖 DOS 启动脚本，不修改其他系统文件。
+    await writeFile(configPath, buildStartupConfigSys(normalizedOptions), "ascii");
+    await writeFile(autoexecPath, buildStartupAutoexecBat(normalizedOptions), "ascii");
+    logServerStep("startup", `临时 CONFIG.SYS: ${configPath}`);
+    logServerStep("startup", `临时 AUTOEXEC.BAT: ${autoexecPath}`);
 
     await execFileAsync("mcopy", ["-o", "-i", imagePath, configPath, "::CONFIG.SYS"]);
     await execFileAsync("mcopy", ["-o", "-i", imagePath, autoexecPath, "::AUTOEXEC.BAT"]);
-    logServerStep(packageId, `已写回启动盘系统配置: ${imagePath}`);
+    logServerStep("startup", `已写回镜像系统配置: ${imagePath}`);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
 
-  const imageStat = await stat(imagePath);
-  logServerStep(packageId, `启动盘生成完成: ${imagePath} (${formatBytes(imageStat.size)})`);
+  // 步骤 3：写入本地索引，把生成来源、参数和说明保存下来，供页面后续直接展示和选择。
+  const fileStat = await stat(imagePath);
+  const records = await readJson(startupFloppyIndexFile, []);
+  const record = {
+    id: `startup-${Date.now()}`,
+    createdAt: new Date().toISOString(),
+    imageFileName,
+    name: normalizedOptions.displayName || buildDefaultStartupDiskName(selectedPackage, normalizedOptions),
+    description: buildStartupDescription(selectedPackage, baseImage, normalizedOptions),
+    note: normalizedOptions.note,
+    packageId: selectedPackage?.id || "",
+    packageName: selectedPackage?.name || "",
+    baseImageName: baseImage.name,
+    baseImageCatalog: baseImage.catalog,
+    options: normalizedOptions
+  };
+
+  records.unshift(record);
+  await writeFile(startupFloppyIndexFile, JSON.stringify(records, null, 2));
+  logServerStep("startup", `启动盘生成完成: ${imagePath} (${formatBytes(fileStat.size)})`);
 
   return {
-    id: gamePackage.id,
-    name: gamePackage.name,
-    image: {
-      name: imageFileName,
-      url: `/generated-disks/${encodeURIComponent(imageFileName)}`,
-      size: imageStat.size,
-      sizeLabel: formatBytes(imageStat.size),
-      driveType: inferDriveType(imageFileName, imageStat.size),
-      catalog: "storage/generated"
+    disk: {
+      ...buildStartupDiskPayload(record),
+      size: fileStat.size,
+      sizeLabel: formatBytes(fileStat.size),
+      updatedAt: fileStat.mtime.toISOString(),
+      hasBootSignature: await detectBootSignature(imagePath),
+      driveType: inferDriveType(imageFileName, fileStat.size)
     },
     paths: {
       baseImagePath: baseImage.filePath,
-      bootDiskPath: imagePath
+      bootDiskPath: imagePath,
+      metadataPath: startupFloppyIndexFile
     }
   };
 }
@@ -464,29 +522,40 @@ function buildPal95SilentSetup(originalSetupBuffer) {
   return silentSetupBuffer;
 }
 
-function buildPal95ConfigSys() {
-  return [
+function buildStartupConfigSys(options) {
+  const lines = [
     "DEVICE=HIMEM.SYS /testmem:off",
     "FILES=40",
-    "BUFFERS=30",
-    "",
-    "DEVICE=cd1.SYS /D:banana",
-    "LASTDRIVE=Z",
-    ""
-  ].join("\r\n");
+    "BUFFERS=30"
+  ];
+
+  if (options.includeCdDriver) {
+    lines.push("", "DEVICE=cd1.SYS /D:banana", "LASTDRIVE=Z");
+  }
+
+  return [...lines, ""].join("\r\n");
 }
 
-function buildPal95AutoexecBat(launchSoundEnabled) {
-  const launchCommand = launchSoundEnabled ? "RUNPAL" : "RUNSAFE";
+function buildStartupAutoexecBat(options) {
+  const lines = ["@echo off"];
 
-  return [
-    "@echo off",
-    "MSCDEX.EXE /D:banana /L:R",
-    "DOSIDLE",
-    "C:",
-    launchCommand,
-    ""
-  ].join("\r\n");
+  if (options.includeCdDriver) {
+    lines.push("MSCDEX.EXE /D:banana /L:R");
+  }
+
+  if (options.includeDosIdle) {
+    lines.push("DOSIDLE");
+  }
+
+  if (options.autoSwitchToCDrive) {
+    lines.push("C:");
+  }
+
+  if (options.autoRunGame && options.packageId === "pal95") {
+    lines.push(options.soundEnabled ? "RUNPAL" : "RUNSAFE");
+  }
+
+  return [...lines, ""].join("\r\n");
 }
 
 async function collectDiskImages(rootPath, urlPrefix, catalog) {
@@ -523,18 +592,87 @@ async function collectDiskImages(rootPath, urlPrefix, catalog) {
   return diskImages;
 }
 
-async function resolveDiskImageByName(imageName) {
-  const diskImages = sortDiskImages([
-    ...await collectDiskImages(diskImagesRoot, "/disk-images/", "storage/images"),
-    ...await collectDiskImages(generatedDiskRoot, "/generated-disks/", "storage/generated")
-  ]);
-  const image = diskImages.find((item) => item.name === imageName);
+async function resolveBaseDiskImageByName(imageName) {
+  const diskImages = await collectDiskImages(diskImagesRoot, "/disk-images/", "storage/images");
+  const image = sortDiskImages(diskImages).find((item) => item.name === imageName);
 
   if (!image) {
     throw new Error(`未找到基础镜像: ${imageName}`);
   }
 
   return image;
+}
+
+function normalizeStartupDiskOptions(options = {}) {
+  return {
+    baseImageName: String(options.baseImageName || defaultBootDiskImageName),
+    packageId: String(options.packageId || ""),
+    displayName: String(options.displayName || "").trim(),
+    note: String(options.note || "").trim(),
+    soundEnabled: Boolean(options.soundEnabled),
+    includeDosIdle: options.includeDosIdle !== false,
+    includeCdDriver: options.includeCdDriver !== false,
+    autoSwitchToCDrive: options.autoSwitchToCDrive !== false,
+    autoRunGame: Boolean(options.autoRunGame)
+  };
+}
+
+function buildStartupDiskFileName(sourceName) {
+  const safeName = slugifyFileName(path.parse(sourceName).name) || "startup-disk";
+  return `${safeName}-${Date.now()}.img`;
+}
+
+function buildDefaultStartupDiskName(selectedPackage, options) {
+  const packageName = selectedPackage?.name || "通用 DOS";
+  const soundLabel = options.soundEnabled ? "声音版" : "静音版";
+  return `${packageName} 启动盘 (${soundLabel})`;
+}
+
+function buildStartupDescription(selectedPackage, baseImage, options) {
+  const segments = [
+    `基础盘: ${baseImage.name}`,
+    `游戏包: ${selectedPackage?.name || "无"}`,
+    `DOSIDLE: ${options.includeDosIdle ? "开" : "关"}`,
+    `CD 驱动: ${options.includeCdDriver ? "开" : "关"}`,
+    `自动切 C 盘: ${options.autoSwitchToCDrive ? "开" : "关"}`,
+    `自动执行游戏: ${options.autoRunGame ? "开" : "关"}`
+  ];
+
+  if (selectedPackage?.id === "pal95") {
+    segments.push(`声音模式: ${options.soundEnabled ? "RUNPAL" : "RUNSAFE"}`);
+  }
+
+  if (options.note) {
+    segments.push(`备注: ${options.note}`);
+  }
+
+  return segments.join(" | ");
+}
+
+function buildStartupDiskPayload(record) {
+  return {
+    id: record.id,
+    name: record.name,
+    description: record.description,
+    note: record.note || "",
+    createdAt: record.createdAt,
+    baseImageName: record.baseImageName,
+    packageId: record.packageId || "",
+    packageName: record.packageName || "",
+    imageFileName: record.imageFileName,
+    url: `/startup-floppy-disks/${encodeURIComponent(record.imageFileName)}`,
+    catalog: "storage/startupFloppyDisk",
+    options: record.options || {}
+  };
+}
+
+function slugifyFileName(value) {
+  return value
+    .normalize("NFKD")
+    .replace(/[^\w.-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
 }
 
 function logServerStep(scope, message) {

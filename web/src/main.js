@@ -2,15 +2,17 @@ import { CanvasTerminal } from "./core/canvas-terminal.js";
 import { EmulatorRuntime } from "./emulator/emulator-runtime.js";
 
 const elements = {
+  baseDiskSelect: document.querySelector("#base-disk-select"),
   bootButton: document.querySelector("#boot-button"),
+  closeStartupDiskDialogButton: document.querySelector("#close-startup-disk-dialog"),
   cpuProfile: document.querySelector("#cpu-profile"),
   eventLog: document.querySelector("#event-log"),
   fileInput: document.querySelector("#image-file"),
+  gamePackageSelect: document.querySelector("#game-package-select"),
+  generateBootButton: document.querySelector("#generate-boot-button"),
   heroStatus: document.querySelector("#hero-status"),
   imageSource: document.querySelector("#image-source"),
   imageStatus: document.querySelector("#image-status"),
-  gamePackageSelect: document.querySelector("#game-package-select"),
-  generateBootButton: document.querySelector("#generate-boot-button"),
   memorySize: document.querySelector("#memory-size"),
   pauseButton: document.querySelector("#pause-button"),
   profileSelect: document.querySelector("#profile-select"),
@@ -22,6 +24,17 @@ const elements = {
   serverImageField: document.querySelector("#server-image-field"),
   serverImageSelect: document.querySelector("#server-image-select"),
   soundEnabled: document.querySelector("#sound-enabled"),
+  startupDialog: document.querySelector("#startup-disk-dialog"),
+  startupDiskAutoRun: document.querySelector("#startup-disk-auto-run"),
+  startupDiskCdrom: document.querySelector("#startup-disk-cdrom"),
+  startupDiskDescription: document.querySelector("#startup-disk-description"),
+  startupDiskDosIdle: document.querySelector("#startup-disk-dosidle"),
+  startupDiskName: document.querySelector("#startup-disk-name"),
+  startupDiskNote: document.querySelector("#startup-disk-note"),
+  startupDiskPackageSelect: document.querySelector("#startup-disk-package-select"),
+  startupDiskSound: document.querySelector("#startup-disk-sound"),
+  startupDiskSubmitButton: document.querySelector("#startup-disk-submit-button"),
+  startupDiskSwitchC: document.querySelector("#startup-disk-switch-c"),
   uploadImageField: document.querySelector("#upload-image-field"),
   v86Screen: document.querySelector("#v86-screen")
 };
@@ -32,9 +45,11 @@ const runtime = new EmulatorRuntime(terminal, {
   onLifecycle: updateLifecycle
 });
 const SETTINGS_KEY = "msdos-simulator-settings";
+const DEFAULT_BASE_DISK_NAME = "msdos622_dosidle_a.img";
 
 let profiles = [];
-let serverImages = [];
+let baseDiskImages = [];
+let startupDisks = [];
 let availableGamePackages = [];
 let runtimeAssets = null;
 let activeLocalImage = null;
@@ -45,55 +60,69 @@ bootstrap().catch((error) => {
 });
 
 async function bootstrap() {
-  // 步骤 1：先建立事件和默认待机画面，让页面可以在异步资源返回前就绪。
+  // 步骤 1：先绑定事件和默认待机画面，让页面可以在异步资源返回前就绪。
   bindEvents();
-  terminal.renderStatus("MS-DOS 6.0 Simulator", "正在检测 v86 运行时与固定目录镜像...");
+  terminal.renderStatus("MS-DOS 6.0 Simulator", "正在检测 v86 运行时、基础盘目录和启动盘目录...");
   syncPauseButton();
 
-  // 步骤 2：并行加载配置、固定镜像列表、扩展硬盘清单和 v86 运行时状态。
-  const [profileItems, diskImages, gamePackages, assets] = await Promise.all([
+  // 步骤 2：并行加载配置、基础盘、启动盘、扩展硬盘清单和 v86 运行时状态。
+  const [profileItems, baseImages, startupDiskItems, gamePackages, assets] = await Promise.all([
     fetchJson("/api/profiles"),
-    fetchJson("/api/disk-images"),
+    fetchJson("/api/base-disk-images"),
+    fetchJson("/api/startup-disks"),
     fetchJson("/api/game-packages"),
     fetchJson("/api/runtime-assets")
   ]);
 
   profiles = profileItems;
-  serverImages = diskImages;
+  baseDiskImages = baseImages;
+  startupDisks = startupDiskItems;
   availableGamePackages = gamePackages;
   runtimeAssets = assets;
 
   populateProfiles(profiles);
-  populateServerImages(serverImages);
+  populateBaseDiskOptions(baseDiskImages);
+  populateStartupDisks(startupDisks);
   populateGamePackages(availableGamePackages);
+  populateStartupDiskPackageOptions(availableGamePackages);
   applyRuntimeAssets(runtimeAssets);
   syncImageSource();
   syncSelectedImageStatus();
 
-  // 步骤 3：v86 运行时就绪标记更新
-  elements.runtimeMode.textContent = `适配器: v86`;
-
-  // 步骤 4：从 localStorage 恢复上次用户选择的参数，覆盖默认值。
+  // 步骤 3：标记当前适配器，并恢复上次保存的选择项。
+  elements.runtimeMode.textContent = "适配器: v86";
   loadSettings();
 
-  terminal.renderStatus("MS-DOS 6.0 Simulator", "请选择 msdos622_dosidle_a.img 并点击启动。");
-  appendLog("系统已就绪，当前首要目标是通过 v86 启动 msdos622_dosidle_a.img。");
+  terminal.renderStatus("MS-DOS 6.0 Simulator", "请先生成或选择启动盘，再点击启动。");
+  appendLog("系统已就绪，当前流程为：选择基础盘 -> 生成启动盘 -> 选择启动盘 -> 启动。");
 }
 
 function bindEvents() {
   elements.fileInput.addEventListener("change", handleFileSelected);
-  elements.imageSource.addEventListener("change", () => { syncImageSource(); saveSettings(); });
+  elements.imageSource.addEventListener("change", () => {
+    syncImageSource();
+    saveSettings();
+  });
   elements.pauseButton.addEventListener("click", handlePauseToggle);
-  elements.profileSelect.addEventListener("change", () => { syncProfileSelection(); saveSettings(); });
-  elements.serverImageSelect.addEventListener("change", () => { syncSelectedImageStatus(); saveSettings(); });
+  elements.profileSelect.addEventListener("change", () => {
+    syncProfileSelection();
+    saveSettings();
+  });
+  elements.serverImageSelect.addEventListener("change", () => {
+    syncSelectedImageStatus();
+    saveSettings();
+  });
   elements.gamePackageSelect.addEventListener("change", saveSettings);
   elements.memorySize.addEventListener("change", saveSettings);
   elements.cpuProfile.addEventListener("change", saveSettings);
   elements.soundEnabled.addEventListener("change", saveSettings);
-  elements.generateBootButton.addEventListener("click", handleGenerateBootDisk);
-  elements.refreshImagesButton.addEventListener("click", refreshServerImages);
+  elements.generateBootButton.addEventListener("click", openStartupDiskDialog);
+  elements.refreshImagesButton.addEventListener("click", () => refreshStartupDisks({ announce: true }));
   elements.bootButton.addEventListener("click", handleBoot);
   elements.resetButton.addEventListener("click", handleReset);
+  elements.closeStartupDiskDialogButton.addEventListener("click", closeStartupDiskDialog);
+  elements.startupDiskSubmitButton.addEventListener("click", handleGenerateStartupDisk);
+  elements.startupDiskPackageSelect.addEventListener("change", syncStartupDialogOptions);
 
   window.addEventListener("keydown", async (event) => {
     if (!["Backspace", "Enter"].includes(event.key) && event.key.length !== 1) {
@@ -161,31 +190,41 @@ async function handleFileSelected(event) {
 }
 
 async function handleBoot() {
-  const selectedProfile = profiles.find((profile) => profile.id === elements.profileSelect.value) || profiles[0];
-  const config = collectConfig(selectedProfile);
-  const selectedImage = resolveSelectedImage();
-  const attachments = await resolveSelectedAttachments(config);
+  try {
+    const selectedProfile = profiles.find((profile) => profile.id === elements.profileSelect.value) || profiles[0];
+    const config = collectConfig(selectedProfile);
+    const selectedImage = resolveSelectedImage();
 
-  inputBuffer = "";
-  terminal.setInputBuffer("");
-  elements.runtimeMode.textContent = `适配器: v86`;
+    const requiresBoundPackage = selectedImage.imageMeta.options?.autoRunGame || selectedImage.imageMeta.options?.autoSwitchToCDrive;
 
-  appendLog(`准备启动: adapter=v86, image=${selectedImage.imageMeta.name}, profile=${selectedProfile?.name || "custom"}, attachments=${attachments.length}`);
-  appendCompatibilityLogs(attachments);
+    if (elements.imageSource.value === "server" && requiresBoundPackage && selectedImage.imageMeta.packageId && selectedImage.imageMeta.packageId !== elements.gamePackageSelect.value) {
+      throw new Error(`所选启动盘绑定了 ${selectedImage.imageMeta.packageName}，请在“扩展硬盘”中选择相同游戏包。`);
+    }
 
-  await runtime.boot({
-    adapterType: "v86",
-    attachments,
-    config,
-    display,
-    diskImage: selectedImage.diskImage,
-    imageMeta: selectedImage.imageMeta,
-    onLog: appendLog,
-    profile: selectedProfile,
-    runtimeAssets
-  });
+    const attachments = await resolveSelectedAttachments(config);
+    inputBuffer = "";
+    terminal.setInputBuffer("");
+    elements.runtimeMode.textContent = "适配器: v86";
 
-  syncPauseButton();
+    appendLog(`准备启动: adapter=v86, image=${selectedImage.imageMeta.name}, profile=${selectedProfile?.name || "custom"}, attachments=${attachments.length}`);
+    appendCompatibilityLogs(attachments);
+
+    await runtime.boot({
+      adapterType: "v86",
+      attachments,
+      config,
+      display,
+      diskImage: selectedImage.diskImage,
+      imageMeta: selectedImage.imageMeta,
+      onLog: appendLog,
+      profile: selectedProfile,
+      runtimeAssets
+    });
+
+    syncPauseButton();
+  } catch (error) {
+    appendLog(`启动前检查失败: ${error.message}`);
+  }
 }
 
 async function handleReset() {
@@ -208,49 +247,103 @@ async function handlePauseToggle() {
   syncPauseButton();
 }
 
-async function refreshServerImages() {
-  const previousSelection = elements.serverImageSelect.value;
-  serverImages = await fetchJson("/api/disk-images");
-  populateServerImages(serverImages);
+async function openStartupDiskDialog() {
+  if (elements.imageSource.value !== "server") {
+    elements.imageSource.value = "server";
+    syncImageSource();
+    appendLog("生成启动盘仅支持服务端基础盘，已切换到服务端镜像模式。");
+  }
 
-  if (previousSelection && serverImages.some((image) => image.name === previousSelection)) {
+  // 步骤 1：打开弹出层前刷新基础盘和启动盘目录，保证用户看到的都是最新内容。
+  await Promise.all([
+    refreshBaseDiskImages({ announce: false, preserveSelection: true }),
+    refreshStartupDisks({ announce: false, preserveSelection: true })
+  ]);
+
+  populateStartupDiskPackageOptions(availableGamePackages);
+  elements.startupDiskPackageSelect.value = elements.gamePackageSelect.value || "pal95";
+  elements.startupDiskSound.checked = elements.soundEnabled.checked;
+  elements.startupDiskDosIdle.checked = true;
+  elements.startupDiskCdrom.checked = true;
+  elements.startupDiskSwitchC.checked = true;
+  elements.startupDiskAutoRun.checked = Boolean(elements.startupDiskPackageSelect.value);
+  elements.startupDiskName.value = "";
+  elements.startupDiskNote.value = "";
+  syncStartupDialogOptions();
+  elements.startupDialog.showModal();
+}
+
+function closeStartupDiskDialog() {
+  elements.startupDialog.close();
+}
+
+async function handleGenerateStartupDisk() {
+  try {
+    const selectedPackageId = elements.startupDiskPackageSelect.value;
+    const payload = {
+      baseImageName: elements.baseDiskSelect.value,
+      packageId: selectedPackageId,
+      displayName: elements.startupDiskName.value.trim(),
+      note: elements.startupDiskNote.value.trim(),
+      soundEnabled: elements.startupDiskSound.checked,
+      includeDosIdle: elements.startupDiskDosIdle.checked,
+      includeCdDriver: elements.startupDiskCdrom.checked,
+      autoSwitchToCDrive: elements.startupDiskSwitchC.checked,
+      autoRunGame: elements.startupDiskAutoRun.checked
+    };
+
+    appendLog(`开始生成启动盘，基础盘=${payload.baseImageName}，游戏包=${selectedPackageId || "无"}`);
+    const generatedResult = await fetchJson("/api/startup-disks", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+
+    // 步骤 2：生成完成后刷新启动盘列表，并自动把新盘设为当前启动目标。
+    await refreshStartupDisks({ announce: false, preserveSelection: false });
+    elements.serverImageSelect.value = generatedResult.disk.id;
+    elements.imageSource.value = "server";
+    elements.gamePackageSelect.value = selectedPackageId || "";
+    syncImageSource();
+    syncSelectedImageStatus();
+    saveSettings();
+    closeStartupDiskDialog();
+
+    appendLog(`启动盘已生成: ${generatedResult.disk.name}`);
+    appendLog(`基础盘路径: ${generatedResult.paths.baseImagePath}`);
+    appendLog(`启动盘路径: ${generatedResult.paths.bootDiskPath}`);
+    appendLog(`启动盘索引: ${generatedResult.paths.metadataPath}`);
+  } catch (error) {
+    appendLog(`生成启动盘失败: ${error.message}`);
+  }
+}
+
+async function refreshBaseDiskImages({ announce = false, preserveSelection = true } = {}) {
+  const previousSelection = elements.baseDiskSelect.value;
+  baseDiskImages = await fetchJson("/api/base-disk-images");
+  populateBaseDiskOptions(baseDiskImages);
+
+  if (preserveSelection && previousSelection && baseDiskImages.some((image) => image.name === previousSelection)) {
+    elements.baseDiskSelect.value = previousSelection;
+  }
+
+  if (announce) {
+    appendLog(`基础盘目录已刷新，当前共 ${baseDiskImages.length} 个。`);
+  }
+}
+
+async function refreshStartupDisks({ announce = false, preserveSelection = true } = {}) {
+  const previousSelection = elements.serverImageSelect.value;
+  startupDisks = await fetchJson("/api/startup-disks");
+  populateStartupDisks(startupDisks);
+
+  if (preserveSelection && previousSelection && startupDisks.some((image) => image.id === previousSelection)) {
     elements.serverImageSelect.value = previousSelection;
   }
 
   syncSelectedImageStatus();
-  appendLog(`固定目录镜像已刷新，当前共 ${serverImages.length} 个。`);
-}
 
-async function handleGenerateBootDisk() {
-  try {
-    if (elements.imageSource.value !== "server") {
-      throw new Error("生成启动盘仅支持服务端固定目录镜像。");
-    }
-
-    const selectedPackageId = elements.gamePackageSelect.value;
-    if (!selectedPackageId) {
-      throw new Error("请先选择扩展硬盘游戏包，再生成对应启动盘。");
-    }
-
-    const baseImage = resolveSelectedImage();
-    appendLog(`开始生成 PAL 启动盘，基础盘=${baseImage.imageMeta.name}`);
-    const generatedBootDisk = await fetchJson(`/api/game-packages/${encodeURIComponent(selectedPackageId)}/materialize-boot`, {
-      method: "POST",
-      body: JSON.stringify({
-        soundEnabled: elements.soundEnabled.checked,
-        baseImageName: baseImage.imageMeta.name
-      })
-    });
-
-    serverImages = await fetchJson("/api/disk-images");
-    populateServerImages(serverImages);
-    elements.serverImageSelect.value = generatedBootDisk.image.name;
-    syncSelectedImageStatus();
-    appendLog(`PAL 启动盘已生成: ${generatedBootDisk.image.name}`);
-    appendLog(`基础盘路径: ${generatedBootDisk.paths.baseImagePath}`);
-    appendLog(`启动盘路径: ${generatedBootDisk.paths.bootDiskPath}`);
-  } catch (error) {
-    appendLog(`生成启动盘失败: ${error.message}`);
+  if (announce) {
+    appendLog(`启动盘目录已刷新，当前共 ${startupDisks.length} 个。`);
   }
 }
 
@@ -274,8 +367,20 @@ function syncProfileSelection() {
 function syncImageSource() {
   const useServerImage = elements.imageSource.value === "server";
   elements.serverImageField.classList.toggle("hidden", !useServerImage);
+  elements.startupDiskDescription.classList.toggle("hidden", !useServerImage);
   elements.uploadImageField.classList.toggle("hidden", useServerImage);
   syncSelectedImageStatus();
+}
+
+function syncStartupDialogOptions() {
+  const hasPackage = Boolean(elements.startupDiskPackageSelect.value);
+  elements.startupDiskAutoRun.disabled = !hasPackage;
+  elements.startupDiskSound.disabled = elements.startupDiskPackageSelect.value !== "pal95";
+
+  if (!hasPackage) {
+    elements.startupDiskAutoRun.checked = false;
+    elements.startupDiskSound.checked = false;
+  }
 }
 
 function collectConfig(profile = null) {
@@ -297,23 +402,31 @@ function populateProfiles(items) {
   syncProfileSelection();
 }
 
-function populateServerImages(items) {
+function populateBaseDiskOptions(items) {
   if (items.length === 0) {
-    elements.serverImageSelect.innerHTML = '<option value="">固定目录暂无镜像</option>';
+    elements.baseDiskSelect.innerHTML = '<option value="">基础盘目录暂无镜像</option>';
     return;
   }
 
-  elements.serverImageSelect.innerHTML = items.map((image) => `<option value="${image.name}">${image.name} · ${image.sizeLabel} · ${image.driveType} · ${image.catalog}</option>`).join("");
-  const preferredImage = items.find((image) => image.name.toLowerCase() === "msdos622_dosidle_a.img");
+  elements.baseDiskSelect.innerHTML = items.map((image) => `<option value="${image.name}">${image.name} · ${image.sizeLabel} · ${image.driveType}</option>`).join("");
+  const preferredImage = items.find((image) => image.name.toLowerCase() === DEFAULT_BASE_DISK_NAME);
+  elements.baseDiskSelect.value = preferredImage?.name || items[0].name;
+}
 
-  if (preferredImage) {
-    elements.serverImageSelect.value = preferredImage.name;
+function populateStartupDisks(items) {
+  if (items.length === 0) {
+    elements.serverImageSelect.innerHTML = '<option value="">启动盘目录暂无镜像</option>';
+    return;
   }
+
+  elements.serverImageSelect.innerHTML = items.map((image) => {
+    const packageName = image.packageName || "通用 DOS";
+    return `<option value="${image.id}">${image.name} · ${image.sizeLabel} · ${packageName} · ${image.catalog}</option>`;
+  }).join("");
 }
 
 function populateGamePackages(items) {
   const availableItems = items.filter((item) => item.available);
-
   elements.gamePackageSelect.innerHTML = ['<option value="">不挂载扩展硬盘</option>', ...availableItems.map((item) => `<option value="${item.id}">${item.name} · ${item.totalSizeLabel} · ${item.preferredSlot.toUpperCase()}</option>`)].join("");
   elements.gamePackageSelect.disabled = availableItems.length === 0;
 
@@ -321,6 +434,11 @@ function populateGamePackages(items) {
   if (preferredGamePackage) {
     elements.gamePackageSelect.value = preferredGamePackage.id;
   }
+}
+
+function populateStartupDiskPackageOptions(items) {
+  const availableItems = items.filter((item) => item.available);
+  elements.startupDiskPackageSelect.innerHTML = ['<option value="">不绑定扩展硬盘</option>', ...availableItems.map((item) => `<option value="${item.id}">${item.name}</option>`)].join("");
 }
 
 function applyRuntimeAssets(assets) {
@@ -365,10 +483,10 @@ function updateLifecycle(status, context) {
 
 function resolveSelectedImage() {
   if (elements.imageSource.value === "server") {
-    const selectedImage = serverImages.find((image) => image.name === elements.serverImageSelect.value);
+    const selectedImage = startupDisks.find((image) => image.id === elements.serverImageSelect.value);
 
     if (!selectedImage) {
-      throw new Error("服务端固定目录中未找到可启动镜像，请先把 msdos622_dosidle_a.img 放入 storage/images/。");
+      throw new Error("启动盘目录中未找到可启动镜像，请先点击“生成启动盘”。");
     }
 
     return {
@@ -451,9 +569,25 @@ function syncSelectedImageStatus() {
   try {
     const selectedImage = resolveSelectedImage();
     elements.imageStatus.textContent = `${selectedImage.imageMeta.name} · ${selectedImage.imageMeta.sizeLabel || formatBytes(selectedImage.imageMeta.size)} · ${selectedImage.imageMeta.driveType}`;
+    syncStartupDiskDescription(selectedImage.imageMeta);
   } catch (error) {
     elements.imageStatus.textContent = error.message.replace("Error: ", "");
+    syncStartupDiskDescription(null);
   }
+}
+
+function syncStartupDiskDescription(startupDisk) {
+  if (elements.imageSource.value !== "server") {
+    elements.startupDiskDescription.textContent = "当前使用本地上传镜像，启动盘说明仅对服务端生成盘生效。";
+    return;
+  }
+
+  if (!startupDisk) {
+    elements.startupDiskDescription.textContent = "请选择或生成启动盘镜像，启动时只会使用这里选中的成品盘。";
+    return;
+  }
+
+  elements.startupDiskDescription.textContent = startupDisk.description || `基础盘: ${startupDisk.baseImageName || "未知"}。`;
 }
 
 function syncPauseButton() {
@@ -464,6 +598,7 @@ function syncPauseButton() {
   }
 
   elements.pauseButton.textContent = runtime.isPaused() ? "继续" : "暂停";
+  elements.pauseButton.disabled = false;
 }
 
 function appendLog(message) {
@@ -523,7 +658,7 @@ function inferDriveType(fileName, size) {
 function saveSettings() {
   const settings = {
     imageSource: elements.imageSource.value,
-    serverImage: elements.serverImageSelect.value,
+    startupDisk: elements.serverImageSelect.value,
     profile: elements.profileSelect.value,
     gamePackage: elements.gamePackageSelect.value,
     memorySize: elements.memorySize.value,
@@ -551,7 +686,6 @@ function loadSettings() {
     return;
   }
 
-  // 按顺序恢复：先设置基础选择项，再设置依赖动态数据的下拉框
   if (settings.imageSource) {
     elements.imageSource.value = settings.imageSource;
     syncImageSource();
@@ -561,8 +695,14 @@ function loadSettings() {
     elements.profileSelect.value = settings.profile;
   }
 
-  if (settings.serverImage && Array.from(elements.serverImageSelect.options).some((opt) => opt.value === settings.serverImage)) {
-    elements.serverImageSelect.value = settings.serverImage;
+  const savedStartupDisk = settings.startupDisk || settings.serverImage;
+  if (savedStartupDisk && Array.from(elements.serverImageSelect.options).some((opt) => opt.value === savedStartupDisk)) {
+    elements.serverImageSelect.value = savedStartupDisk;
+  } else if (settings.serverImage) {
+    const legacyDisk = startupDisks.find((disk) => disk.name === settings.serverImage);
+    if (legacyDisk) {
+      elements.serverImageSelect.value = legacyDisk.id;
+    }
   }
 
   if (settings.gamePackage && Array.from(elements.gamePackageSelect.options).some((opt) => opt.value === settings.gamePackage)) {
@@ -581,7 +721,7 @@ function loadSettings() {
     elements.soundEnabled.checked = settings.soundEnabled;
   }
 
-  // 步骤 2：pal95 当前优先保证“能进游戏”，因此在读取旧设置后仍强制回到静音兼容默认值。
+  // 步骤 4：pal95 当前优先保证“能进游戏”，因此在读取旧设置后仍强制回到静音兼容默认值。
   if (elements.profileSelect.value === "pal95") {
     elements.soundEnabled.checked = false;
   }

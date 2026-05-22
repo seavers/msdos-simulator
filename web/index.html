@@ -40,14 +40,15 @@
               </select>
             </label>
             <label class="field" id="server-image-field">
-              <span>服务端镜像</span>
+              <span>启动盘镜像</span>
               <select id="server-image-select"></select>
             </label>
+            <p id="startup-disk-description" class="field-note">请选择或生成启动盘镜像，启动时只会使用这里选中的成品盘。</p>
             <label class="field" id="upload-image-field">
               <span>本地镜像</span>
               <input id="image-file" type="file" accept=".img,.ima,.vfd,.flp,.bin,.iso" />
             </label>
-            <p class="field-note">固定目录：`storage/images/`，默认镜像：`msdos622_dosidle_a.img`</p>
+            <p class="field-note">基础盘目录：`storage/images/`；启动盘目录：`storage/startupFloppyDisk/`；默认基础盘：`msdos622_dosidle_a.img`</p>
             <div class="status-pills">
               <span id="image-status" class="status-pill">未选择镜像</span>
               <span id="runtime-assets-status" class="status-pill">v86 运行时检测中</span>
@@ -63,7 +64,7 @@
             <p class="field-note">可选：把固定目录游戏文件打成 FAT16 数据盘并作为 `hda` 挂载。第一阶段默认支持 `pal95/` 目录。</p>
             <div class="button-row">
               <button id="generate-boot-button" type="button" class="secondary">生成启动盘</button>
-              <button id="refresh-images-button" type="button" class="secondary">刷新目录</button>
+              <button id="refresh-images-button" type="button" class="secondary">刷新启动盘</button>
               <button id="pause-button" type="button" class="secondary">暂停</button>
               <button id="boot-button" type="button">启动</button>
               <button id="reset-button" type="button" class="secondary">重置</button>
@@ -110,6 +111,66 @@
         </aside>
       </main>
     </div>
+
+    <dialog id="startup-disk-dialog" class="startup-dialog">
+      <form method="dialog" class="startup-dialog-panel">
+        <header class="startup-dialog-header">
+          <div>
+            <p class="eyebrow">Startup Floppy Builder</p>
+            <h2>生成启动盘</h2>
+          </div>
+          <button id="close-startup-disk-dialog" type="button" class="ghost-button" aria-label="关闭">关闭</button>
+        </header>
+
+        <div class="startup-dialog-grid">
+          <label class="field">
+            <span>原始基础盘</span>
+            <select id="base-disk-select"></select>
+          </label>
+          <label class="field">
+            <span>扩展硬盘游戏包</span>
+            <select id="startup-disk-package-select"></select>
+          </label>
+          <label class="field">
+            <span>启动盘名称</span>
+            <input id="startup-disk-name" type="text" maxlength="80" placeholder="例如：仙剑95-静音启动盘" />
+          </label>
+          <label class="field">
+            <span>说明备注</span>
+            <textarea id="startup-disk-note" rows="3" placeholder="例如：保留 DOSIDLE，默认静音自动进游戏"></textarea>
+          </label>
+        </div>
+
+        <div class="startup-option-grid">
+          <label class="field checkbox">
+            <input id="startup-disk-auto-run" type="checkbox" checked />
+            <span>自动执行游戏启动命令</span>
+          </label>
+          <label class="field checkbox">
+            <input id="startup-disk-sound" type="checkbox" />
+            <span>使用声音版启动（PAL95 对应 RUNPAL）</span>
+          </label>
+          <label class="field checkbox">
+            <input id="startup-disk-dosidle" type="checkbox" checked />
+            <span>保留 DOSIDLE</span>
+          </label>
+          <label class="field checkbox">
+            <input id="startup-disk-cdrom" type="checkbox" checked />
+            <span>加载 CD 驱动与 MSCDEX</span>
+          </label>
+          <label class="field checkbox">
+            <input id="startup-disk-switch-c" type="checkbox" checked />
+            <span>启动后自动切到 C 盘</span>
+          </label>
+        </div>
+
+        <p class="field-note">生成时会复制一份基础盘，只覆盖 `CONFIG.SYS` 和 `AUTOEXEC.BAT`，并把参数记录到 `storage/startupFloppyDisk/index.json`。</p>
+
+        <div class="startup-dialog-actions">
+          <button id="startup-disk-submit-button" type="button">开始生成</button>
+        </div>
+      </form>
+    </dialog>
 
     <script type="module" src="/src/main.js"></script>
   </body>
