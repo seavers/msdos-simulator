@@ -2,7 +2,6 @@ import { CanvasTerminal } from "./core/canvas-terminal.js";
 import { EmulatorRuntime } from "./emulator/emulator-runtime.js";
 
 const elements = {
-  adapterSelect: document.querySelector("#adapter-select"),
   bootButton: document.querySelector("#boot-button"),
   cpuProfile: document.querySelector("#cpu-profile"),
   eventLog: document.querySelector("#event-log"),
@@ -76,16 +75,11 @@ async function bootstrap() {
   syncImageSource();
   syncSelectedImageStatus();
 
-  // 步骤 3：如果真实内核资源已经就绪，就默认切到 v86 作为首要启动路径。
-  if (runtimeAssets?.v86?.ready) {
-    elements.adapterSelect.value = "v86";
-  }
-  elements.runtimeMode.textContent = `适配器: ${elements.adapterSelect.value}`;
+  // 步骤 3：v86 运行时就绪标记更新
+  elements.runtimeMode.textContent = `适配器: v86`;
 
   // 步骤 4：从 localStorage 恢复上次用户选择的参数，覆盖默认值。
   loadSettings();
-
-  elements.runtimeMode.textContent = `适配器: ${elements.adapterSelect.value}`;
 
   terminal.renderStatus("MS-DOS 6.0 Simulator", "请选择 dos6.22.img 并点击启动。");
   appendLog("系统已就绪，当前首要目标是通过 v86 启动 dos6.22.img。");
@@ -105,11 +99,6 @@ function bindEvents() {
   });
   elements.profileSelect.addEventListener("change", () => { syncProfileSelection(); saveSettings(); });
   elements.serverImageSelect.addEventListener("change", () => { syncSelectedImageStatus(); saveSettings(); });
-  elements.adapterSelect.addEventListener("change", () => {
-    elements.runtimeMode.textContent = `适配器: ${elements.adapterSelect.value}`;
-    syncPauseButton();
-    saveSettings();
-  });
   elements.gamePackageSelect.addEventListener("change", saveSettings);
   elements.memorySize.addEventListener("change", saveSettings);
   elements.cpuProfile.addEventListener("change", saveSettings);
@@ -198,13 +187,13 @@ async function handleBoot() {
   inputBuffer = "";
   autoPauseReason = "";
   terminal.setInputBuffer("");
-  elements.runtimeMode.textContent = `适配器: ${elements.adapterSelect.value}`;
+  elements.runtimeMode.textContent = `适配器: v86`;
 
-  appendLog(`准备启动: adapter=${elements.adapterSelect.value}, image=${selectedImage.imageMeta.name}, profile=${selectedProfile?.name || "custom"}, attachments=${attachments.length}`);
+  appendLog(`准备启动: adapter=v86, image=${selectedImage.imageMeta.name}, profile=${selectedProfile?.name || "custom"}, attachments=${attachments.length}`);
   appendCompatibilityLogs(attachments);
 
   await runtime.boot({
-    adapterType: elements.adapterSelect.value,
+    adapterType: "v86",
     attachments,
     config,
     display,
@@ -521,7 +510,6 @@ function syncPauseButton() {
     return;
   }
 
-  elements.pauseButton.disabled = elements.adapterSelect.value !== "v86";
   elements.pauseButton.textContent = runtime.isPaused() ? "继续" : "暂停";
 }
 
@@ -571,7 +559,6 @@ function saveSettings() {
   const settings = {
     imageSource: elements.imageSource.value,
     serverImage: elements.serverImageSelect.value,
-    adapter: elements.adapterSelect.value,
     profile: elements.profileSelect.value,
     gamePackage: elements.gamePackageSelect.value,
     memorySize: elements.memorySize.value,
@@ -606,10 +593,6 @@ function loadSettings() {
   if (settings.imageSource) {
     elements.imageSource.value = settings.imageSource;
     syncImageSource();
-  }
-
-  if (settings.adapter) {
-    elements.adapterSelect.value = settings.adapter;
   }
 
   if (settings.profile && Array.from(elements.profileSelect.options).some((opt) => opt.value === settings.profile)) {

@@ -1,10 +1,4 @@
-import { MockDosAdapter } from "./adapters/mock-dos-adapter.js";
 import { V86Adapter } from "./adapters/v86-adapter.js";
-
-const ADAPTERS = {
-  mock: MockDosAdapter,
-  v86: V86Adapter
-};
 
 export class EmulatorRuntime {
   constructor(terminal, hooks) {
@@ -19,9 +13,8 @@ export class EmulatorRuntime {
       await this.currentAdapter.destroy();
     }
 
-    const AdapterClass = ADAPTERS[context.adapterType] || MockDosAdapter;
     this.context = context;
-    this.currentAdapter = new AdapterClass(this.terminal, context.config);
+    this.currentAdapter = new V86Adapter(this.terminal, context.config);
 
     this.hooks.onLifecycle("booting", context);
 

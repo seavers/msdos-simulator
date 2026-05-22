@@ -21,7 +21,7 @@
         <section class="display-panel">
           <div class="display-toolbar">
             <span>Display Surface</span>
-            <span id="runtime-mode">适配器: mock</span>
+            <span id="runtime-mode">适配器: v86</span>
           </div>
           <div class="display-stage">
             <canvas id="dos-screen" width="720" height="400" aria-label="MS-DOS Canvas Display"></canvas>
@@ -52,13 +52,6 @@
               <span id="image-status" class="status-pill">未选择镜像</span>
               <span id="runtime-assets-status" class="status-pill">v86 运行时检测中</span>
             </div>
-            <label class="field">
-              <span>引擎类型</span>
-              <select id="adapter-select">
-                <option value="v86">V86（真实 DOS 启动）</option>
-                <option value="mock">Mock DOS（演示流程）</option>
-              </select>
-            </label>
             <label class="field">
               <span>启动配置</span>
               <select id="profile-select"></select>

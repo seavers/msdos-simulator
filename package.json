@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node server/index.mjs",
     "start": "node server/index.mjs",
-    "check": "node --check server/index.mjs && node --check web/src/main.js && node --check web/src/core/canvas-terminal.js && node --check web/src/emulator/emulator-runtime.js && node --check web/src/emulator/adapters/mock-dos-adapter.js && node --check web/src/emulator/adapters/v86-adapter.js"
+    "check": "node --check server/index.mjs && node --check web/src/main.js && node --check web/src/core/canvas-terminal.js && node --check web/src/emulator/emulator-runtime.js && node --check web/src/emulator/adapters/v86-adapter.js"
   },
   "dependencies": {
     "v86": "^0.5.357"
