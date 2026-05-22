@@ -1,8 +1,11 @@
 import { createServer } from "node:http";
-import { mkdir, open, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { buildFat16Image, describeSourceDirectory } from "./fat16-image-builder.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -18,6 +21,8 @@ const v86BiosRoot = path.join(projectRoot, "storage", "runtime", "v86", "bios");
 const v86PackageRoot = await resolvePackageRoot("v86/package.json");
 const v86BuildRoot = v86PackageRoot ? path.join(v86PackageRoot, "build") : null;
 const supportedDiskExtensions = new Set([".img", ".ima", ".vfd", ".flp", ".iso", ".bin"]);
+const execFileAsync = promisify(execFile);
+const defaultBootDiskImageName = "msdos622_dosidle_a.img";
 const gamePackages = [
   {
     id: "pal95",
@@ -89,6 +94,13 @@ const server = createServer(async (request, response) => {
       const packageId = path.basename(url.pathname.replace("/materialize", ""));
       const payload = await readBody(request);
       sendJson(response, 200, await materializeGamePackage(packageId, payload));
+      return;
+    }
+
+    if (url.pathname.startsWith("/api/game-packages/") && url.pathname.endsWith("/materialize-boot") && request.method === "POST") {
+      const packageId = path.basename(url.pathname.replace("/materialize-boot", ""));
+      const payload = await readBody(request);
+      sendJson(response, 200, await materializeGameBootDisk(packageId, payload));
       return;
     }
 
@@ -203,45 +215,27 @@ async function readBody(request) {
 }
 
 async function listDiskImages() {
-  const entries = await readdir(diskImagesRoot, { withFileTypes: true });
-  const diskImages = [];
+  const diskImages = [
+    ...await collectDiskImages(diskImagesRoot, "/disk-images/", "storage/images"),
+    ...await collectDiskImages(generatedDiskRoot, "/generated-disks/", "storage/generated")
+  ];
 
-  for (const entry of entries) {
-    if (!entry.isFile()) {
-      continue;
-    }
+  return sortDiskImages(diskImages).map(({ filePath, ...diskImage }) => diskImage);
+}
 
-    const extension = path.extname(entry.name).toLowerCase();
-
-    if (!supportedDiskExtensions.has(extension)) {
-      continue;
-    }
-
-    const filePath = path.join(diskImagesRoot, entry.name);
-    const fileStat = await stat(filePath);
-
-    diskImages.push({
-      name: entry.name,
-      size: fileStat.size,
-      sizeLabel: formatBytes(fileStat.size),
-      updatedAt: fileStat.mtime.toISOString(),
-      hasBootSignature: await detectBootSignature(filePath),
-      driveType: inferDriveType(entry.name, fileStat.size),
-      url: `/disk-images/${encodeURIComponent(entry.name)}`
-    });
-  }
-
-  diskImages.sort((left, right) => {
-    if (left.name.toLowerCase() === "msdos622_dosidle_a.img") {
+function sortDiskImages(diskImages) {
+  return diskImages.sort((left, right) => {
+    if (left.name.toLowerCase() === defaultBootDiskImageName) {
       return -1;
     }
-    if (right.name.toLowerCase() === "msdos622_dosidle_a.img") {
+    if (right.name.toLowerCase() === defaultBootDiskImageName) {
       return 1;
+    }
+    if (left.catalog !== right.catalog) {
+      return left.catalog.localeCompare(right.catalog, "zh-CN");
     }
     return left.name.localeCompare(right.name, "zh-CN");
   });
-
-  return diskImages;
 }
 
 async function listGamePackages() {
@@ -386,6 +380,62 @@ async function materializeGamePackage(packageId, options = {}) {
   };
 }
 
+async function materializeGameBootDisk(packageId, options = {}) {
+  const gamePackage = gamePackages.find((item) => item.id === packageId);
+
+  if (!gamePackage) {
+    throw new Error(`未找到游戏包: ${packageId}`);
+  }
+
+  const baseImage = await resolveDiskImageByName(options.baseImageName || defaultBootDiskImageName);
+  const launchSoundEnabled = Boolean(options.soundEnabled);
+  const imageFileName = launchSoundEnabled ? `${packageId}-boot-sound.img` : `${packageId}-boot-safe.img`;
+  const imagePath = path.join(generatedDiskRoot, imageFileName);
+  const tempRoot = await mkdtemp(path.join(tmpdir(), `${packageId}-boot-`));
+  const configPath = path.join(tempRoot, "CONFIG.SYS");
+  const autoexecPath = path.join(tempRoot, "AUTOEXEC.BAT");
+
+  logServerStep(packageId, `开始生成启动盘，base=${baseImage.filePath}`);
+  logServerStep(packageId, `输出启动盘: ${imagePath}`);
+
+  try {
+    // 步骤 1：复制用户当前选中的基础盘，保留现有 DOS 环境与 DOSIDLE 配置。
+    await copyFile(baseImage.filePath, imagePath);
+
+    // 步骤 2：仅覆盖仙剑启动所需的最小 AUTOEXEC，允许用户后续手动在页面中选中该盘启动。
+    await writeFile(configPath, buildPal95ConfigSys(), "ascii");
+    await writeFile(autoexecPath, buildPal95AutoexecBat(launchSoundEnabled), "ascii");
+    logServerStep(packageId, `临时 CONFIG.SYS: ${configPath}`);
+    logServerStep(packageId, `临时 AUTOEXEC.BAT: ${autoexecPath}`);
+
+    await execFileAsync("mcopy", ["-o", "-i", imagePath, configPath, "::CONFIG.SYS"]);
+    await execFileAsync("mcopy", ["-o", "-i", imagePath, autoexecPath, "::AUTOEXEC.BAT"]);
+    logServerStep(packageId, `已写回启动盘系统配置: ${imagePath}`);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+
+  const imageStat = await stat(imagePath);
+  logServerStep(packageId, `启动盘生成完成: ${imagePath} (${formatBytes(imageStat.size)})`);
+
+  return {
+    id: gamePackage.id,
+    name: gamePackage.name,
+    image: {
+      name: imageFileName,
+      url: `/generated-disks/${encodeURIComponent(imageFileName)}`,
+      size: imageStat.size,
+      sizeLabel: formatBytes(imageStat.size),
+      driveType: inferDriveType(imageFileName, imageStat.size),
+      catalog: "storage/generated"
+    },
+    paths: {
+      baseImagePath: baseImage.filePath,
+      bootDiskPath: imagePath
+    }
+  };
+}
+
 async function detectBootSignature(filePath) {
   const fileHandle = await open(filePath, "r");
 
@@ -412,6 +462,79 @@ function buildPal95SilentSetup(originalSetupBuffer) {
   }
 
   return silentSetupBuffer;
+}
+
+function buildPal95ConfigSys() {
+  return [
+    "DEVICE=HIMEM.SYS /testmem:off",
+    "FILES=40",
+    "BUFFERS=30",
+    "",
+    "DEVICE=cd1.SYS /D:banana",
+    "LASTDRIVE=Z",
+    ""
+  ].join("\r\n");
+}
+
+function buildPal95AutoexecBat(launchSoundEnabled) {
+  const launchCommand = launchSoundEnabled ? "RUNPAL" : "RUNSAFE";
+
+  return [
+    "@echo off",
+    "MSCDEX.EXE /D:banana /L:R",
+    "DOSIDLE",
+    "C:",
+    launchCommand,
+    ""
+  ].join("\r\n");
+}
+
+async function collectDiskImages(rootPath, urlPrefix, catalog) {
+  const entries = await readdir(rootPath, { withFileTypes: true });
+  const diskImages = [];
+
+  for (const entry of entries) {
+    if (!entry.isFile()) {
+      continue;
+    }
+
+    const extension = path.extname(entry.name).toLowerCase();
+
+    if (!supportedDiskExtensions.has(extension)) {
+      continue;
+    }
+
+    const filePath = path.join(rootPath, entry.name);
+    const fileStat = await stat(filePath);
+
+    diskImages.push({
+      name: entry.name,
+      size: fileStat.size,
+      sizeLabel: formatBytes(fileStat.size),
+      updatedAt: fileStat.mtime.toISOString(),
+      hasBootSignature: await detectBootSignature(filePath),
+      driveType: inferDriveType(entry.name, fileStat.size),
+      url: `${urlPrefix}${encodeURIComponent(entry.name)}`,
+      catalog,
+      filePath
+    });
+  }
+
+  return diskImages;
+}
+
+async function resolveDiskImageByName(imageName) {
+  const diskImages = sortDiskImages([
+    ...await collectDiskImages(diskImagesRoot, "/disk-images/", "storage/images"),
+    ...await collectDiskImages(generatedDiskRoot, "/generated-disks/", "storage/generated")
+  ]);
+  const image = diskImages.find((item) => item.name === imageName);
+
+  if (!image) {
+    throw new Error(`未找到基础镜像: ${imageName}`);
+  }
+
+  return image;
 }
 
 function logServerStep(scope, message) {

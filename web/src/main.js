@@ -10,6 +10,7 @@ const elements = {
   imageSource: document.querySelector("#image-source"),
   imageStatus: document.querySelector("#image-status"),
   gamePackageSelect: document.querySelector("#game-package-select"),
+  generateBootButton: document.querySelector("#generate-boot-button"),
   memorySize: document.querySelector("#memory-size"),
   pauseButton: document.querySelector("#pause-button"),
   profileSelect: document.querySelector("#profile-select"),
@@ -89,6 +90,7 @@ function bindEvents() {
   elements.memorySize.addEventListener("change", saveSettings);
   elements.cpuProfile.addEventListener("change", saveSettings);
   elements.soundEnabled.addEventListener("change", saveSettings);
+  elements.generateBootButton.addEventListener("click", handleGenerateBootDisk);
   elements.refreshImagesButton.addEventListener("click", refreshServerImages);
   elements.bootButton.addEventListener("click", handleBoot);
   elements.resetButton.addEventListener("click", handleReset);
@@ -207,10 +209,49 @@ async function handlePauseToggle() {
 }
 
 async function refreshServerImages() {
+  const previousSelection = elements.serverImageSelect.value;
   serverImages = await fetchJson("/api/disk-images");
   populateServerImages(serverImages);
+
+  if (previousSelection && serverImages.some((image) => image.name === previousSelection)) {
+    elements.serverImageSelect.value = previousSelection;
+  }
+
   syncSelectedImageStatus();
   appendLog(`固定目录镜像已刷新，当前共 ${serverImages.length} 个。`);
+}
+
+async function handleGenerateBootDisk() {
+  try {
+    if (elements.imageSource.value !== "server") {
+      throw new Error("生成启动盘仅支持服务端固定目录镜像。");
+    }
+
+    const selectedPackageId = elements.gamePackageSelect.value;
+    if (!selectedPackageId) {
+      throw new Error("请先选择扩展硬盘游戏包，再生成对应启动盘。");
+    }
+
+    const baseImage = resolveSelectedImage();
+    appendLog(`开始生成 PAL 启动盘，基础盘=${baseImage.imageMeta.name}`);
+    const generatedBootDisk = await fetchJson(`/api/game-packages/${encodeURIComponent(selectedPackageId)}/materialize-boot`, {
+      method: "POST",
+      body: JSON.stringify({
+        soundEnabled: elements.soundEnabled.checked,
+        baseImageName: baseImage.imageMeta.name
+      })
+    });
+
+    serverImages = await fetchJson("/api/disk-images");
+    populateServerImages(serverImages);
+    elements.serverImageSelect.value = generatedBootDisk.image.name;
+    syncSelectedImageStatus();
+    appendLog(`PAL 启动盘已生成: ${generatedBootDisk.image.name}`);
+    appendLog(`基础盘路径: ${generatedBootDisk.paths.baseImagePath}`);
+    appendLog(`启动盘路径: ${generatedBootDisk.paths.bootDiskPath}`);
+  } catch (error) {
+    appendLog(`生成启动盘失败: ${error.message}`);
+  }
 }
 
 function syncProfileSelection() {
@@ -262,7 +303,7 @@ function populateServerImages(items) {
     return;
   }
 
-  elements.serverImageSelect.innerHTML = items.map((image) => `<option value="${image.name}">${image.name} · ${image.sizeLabel} · ${image.driveType}</option>`).join("");
+  elements.serverImageSelect.innerHTML = items.map((image) => `<option value="${image.name}">${image.name} · ${image.sizeLabel} · ${image.driveType} · ${image.catalog}</option>`).join("");
   const preferredImage = items.find((image) => image.name.toLowerCase() === "msdos622_dosidle_a.img");
 
   if (preferredImage) {
