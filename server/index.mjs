@@ -27,12 +27,12 @@ const gamePackages = [
     imageFileName: "pal95-hdd.img",
     metadataFileName: "pal95-hdd.json",
     preferredSlot: "hda",
-    launchCommand: "C:\\\rRUNPAL\r",
+    launchCommand: "C:\\\rRUNSAFE\r",
     compatibility: {
       storage: { level: "ready", summary: "已支持把 pal95 目录固化为 FAT16 数据盘，并以 hda 方式挂载到 DOS。" },
       memory: { level: "ready", summary: "已支持把总内存参数传给 v86；XMS/EMS 仍取决于 dos 启动镜像中的 CONFIG.SYS/AUTOEXEC.BAT。" },
       vga: { level: "ready", summary: "已支持 VGA BIOS 与图形模式切换，前端会记录分辨率/色深变化，便于观察 320x200 256 色进入情况。" },
-      sound: { level: "partial", summary: "已暴露 SB16 / AdLib 开关和 BLASTER 启动环境，仍需结合游戏内声音测试继续确认 IRQ/DMA 兼容。" },
+      sound: { level: "partial", summary: "当前默认优先走静音兼容启动，以绕过 PLAY 模块报错；SB16 / AdLib 仍需后续继续调试。" },
       timing: { level: "partial", summary: "当前依赖 v86 的 PIT/CPU 调度，已适合首轮验证；若存在动画或音乐速度异常，需要继续做专项时序调优。" }
     }
   }
@@ -40,7 +40,7 @@ const gamePackages = [
 
 const defaultProfiles = [
   { id: "dos-default", name: "MS-DOS 6.0 默认", memoryMb: 16, cpuProfile: "486dx2", soundEnabled: true },
-  { id: "pal95", name: "仙剑 95 兼容预设", memoryMb: 16, cpuProfile: "486dx2", soundEnabled: true }
+  { id: "pal95", name: "仙剑 95 兼容预设", memoryMb: 16, cpuProfile: "486dx2", soundEnabled: false }
 ];
 
 await ensureJsonFile(profilesFile, defaultProfiles);
@@ -87,7 +87,8 @@ const server = createServer(async (request, response) => {
 
     if (url.pathname.startsWith("/api/game-packages/") && url.pathname.endsWith("/materialize") && request.method === "POST") {
       const packageId = path.basename(url.pathname.replace("/materialize", ""));
-      sendJson(response, 200, await materializeGamePackage(packageId));
+      const payload = await readBody(request);
+      sendJson(response, 200, await materializeGamePackage(packageId, payload));
       return;
     }
 
@@ -273,7 +274,7 @@ async function listGamePackages() {
   return packages;
 }
 
-async function materializeGamePackage(packageId) {
+async function materializeGamePackage(packageId, options = {}) {
   const gamePackage = gamePackages.find((item) => item.id === packageId);
 
   if (!gamePackage) {
@@ -286,10 +287,31 @@ async function materializeGamePackage(packageId) {
 
   const imagePath = path.join(generatedDiskRoot, gamePackage.imageFileName);
   const metadataPath = path.join(generatedDiskRoot, gamePackage.metadataFileName);
+  const launchSoundEnabled = Boolean(options.soundEnabled);
+  const originalSetupBuffer = await readFile(path.join(gamePackage.sourceDirectory, "SETUP.DAT"));
+  const silentSetupBuffer = buildPal95SilentSetup(originalSetupBuffer);
   const virtualFiles = [
     {
       name: "RUNPAL.BAT",
-      content: ["@ECHO OFF", "SET BLASTER=A220 I7 D1 H5 T6", "SET SOUND=C:\\", "SET MIDI=SYNTH:1 MAP:E MODE:0", "PAL.EXE"].join("\r\n") + "\r\n"
+      content: [
+        "@ECHO OFF",
+        "COPY /Y SETPSND.DAT SETUP.DAT >NUL",
+        "SET BLASTER=A220 I7 D1 H5 T6",
+        "SET SOUND=C:\\",
+        "SET MIDI=SYNTH:1 MAP:E MODE:0",
+        "PAL.EXE"
+      ].join("\r\n") + "\r\n"
+    },
+    {
+      name: "RUNSAFE.BAT",
+      content: [
+        "@ECHO OFF",
+        "COPY /Y SETPNOS.DAT SETUP.DAT >NUL",
+        "SET BLASTER=",
+        "SET SOUND=",
+        "SET MIDI=",
+        "PAL.EXE"
+      ].join("\r\n") + "\r\n"
     },
     {
       name: "PALDIAG.BAT",
@@ -302,7 +324,7 @@ async function materializeGamePackage(packageId) {
         "SET BLASTER",
         "DIR PAL.EXE",
         "ECHO.",
-        "ECHO 建议先执行 RUNPAL，再观察是否进入 320x200 256 色与声音初始化。"
+        "ECHO 先执行 RUNSAFE 绕过 PLAY 模块，再视情况尝试 RUNPAL。"
       ].join("\r\n") + "\r\n"
     },
     {
@@ -311,10 +333,18 @@ async function materializeGamePackage(packageId) {
         "PAL95 DOS 模拟提示",
         "",
         "1. 先执行 PALDIAG 查看 DOS 内存与 BLASTER 环境。",
-        "2. 再执行 RUNPAL 进入游戏。",
-        "3. 若黑屏或卡死，重点关注 VGA 模式切换日志。",
-        "4. 若无声，优先检查游戏内的 SB16/AdLib 选择与中断设置。"
+        "2. 优先执行 RUNSAFE 绕过 PLAY 模块的声卡初始化。",
+        "3. 若静音模式可进游戏，再尝试 RUNPAL 验证声音。",
+        "4. 若黑屏或卡死，重点关注 VGA 模式切换日志。"
       ].join("\r\n") + "\r\n"
+    },
+    {
+      name: "SETPSND.DAT",
+      content: originalSetupBuffer
+    },
+    {
+      name: "SETPNOS.DAT",
+      content: silentSetupBuffer
     }
   ];
 
@@ -332,7 +362,7 @@ async function materializeGamePackage(packageId) {
   return {
     id: gamePackage.id,
     name: gamePackage.name,
-    launchCommand: gamePackage.launchCommand,
+    launchCommand: launchSoundEnabled ? "C:\\\rRUNPAL\r" : gamePackage.launchCommand,
     compatibility: gamePackage.compatibility,
     mount: {
       name: gamePackage.imageFileName,
@@ -360,6 +390,17 @@ async function detectBootSignature(filePath) {
   } finally {
     await fileHandle.close();
   }
+}
+
+function buildPal95SilentSetup(originalSetupBuffer) {
+  const silentSetupBuffer = Buffer.from(originalSetupBuffer);
+
+  // 步骤 1：保留文件头标识，只清空已知的声音设备选项区，优先构造“无声卡”兼容配置。
+  for (let offset = 8; offset <= 18 && offset + 1 < silentSetupBuffer.length; offset += 2) {
+    silentSetupBuffer.writeUInt16LE(0, offset);
+  }
+
+  return silentSetupBuffer;
 }
 
 async function readJson(filePath, fallback) {

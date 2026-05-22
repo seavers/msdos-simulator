@@ -11,6 +11,6 @@
     "name": "仙剑 95 兼容预设",
     "memoryMb": 16,
     "cpuProfile": "486dx2",
-    "soundEnabled": true
+    "soundEnabled": false
   }
 ]

@@ -164,7 +164,7 @@ async function handleBoot() {
   const selectedProfile = profiles.find((profile) => profile.id === elements.profileSelect.value) || profiles[0];
   const config = collectConfig(selectedProfile);
   const selectedImage = resolveSelectedImage();
-  const attachments = await resolveSelectedAttachments();
+  const attachments = await resolveSelectedAttachments(config);
   const startupAutomation = resolveStartupAutomation(attachments, config);
 
   inputBuffer = "";
@@ -231,6 +231,7 @@ function syncProfileSelection() {
   if (profile.id === "pal95" && Array.from(elements.gamePackageSelect.options).some((option) => option.value === "pal95")) {
     elements.gamePackageSelect.value = "pal95";
     elements.autoLaunchEnabled.checked = true;
+    appendLog("仙剑 95 兼容预设默认使用静音启动，用于绕过 PLAY 模块报错。");
   }
 }
 
@@ -253,7 +254,7 @@ function collectConfig(profile = null) {
 function populateProfiles(items) {
   const fallbackProfiles = items.length > 0 ? items : [
     { id: "dos-default", name: "MS-DOS 6.0 默认", memoryMb: 16, cpuProfile: "486dx2", soundEnabled: true },
-    { id: "pal95", name: "仙剑 95 兼容预设", memoryMb: 16, cpuProfile: "486dx2", soundEnabled: true }
+    { id: "pal95", name: "仙剑 95 兼容预设", memoryMb: 16, cpuProfile: "486dx2", soundEnabled: false }
   ];
 
   elements.profileSelect.innerHTML = fallbackProfiles.map((profile) => `<option value="${profile.id}">${profile.name}</option>`).join("");
@@ -363,7 +364,7 @@ function resolveSelectedImage() {
   };
 }
 
-async function resolveSelectedAttachments() {
+async function resolveSelectedAttachments(config) {
   const selectedPackageId = elements.gamePackageSelect.value;
 
   if (!selectedPackageId) {
@@ -379,10 +380,13 @@ async function resolveSelectedAttachments() {
   // 步骤 1：启动前先在服务端把游戏目录固化为 FAT16 数据盘，避免前端直接处理大量原始文件。
   appendLog(`正在准备扩展硬盘: ${selectedPackage.name}`);
   const materializedPackage = await fetchJson(`/api/game-packages/${encodeURIComponent(selectedPackage.id)}/materialize`, {
-    method: "POST"
+    method: "POST",
+    body: JSON.stringify({
+      soundEnabled: Boolean(config?.soundEnabled)
+    })
   });
 
-  appendLog(`扩展硬盘已就绪: ${materializedPackage.name} -> ${materializedPackage.mount.preferredSlot.toUpperCase()} (${materializedPackage.mount.sizeLabel})，DOS 内可切到 C: 后运行 RUNPAL 或 PAL.EXE。`);
+  appendLog(`扩展硬盘已就绪: ${materializedPackage.name} -> ${materializedPackage.mount.preferredSlot.toUpperCase()} (${materializedPackage.mount.sizeLabel})，当前推荐命令为 ${materializedPackage.launchCommand.includes("RUNSAFE") ? "RUNSAFE" : "RUNPAL"}。`);
 
   return [
     {
@@ -523,6 +527,11 @@ function loadSettings() {
 
   if (typeof settings.soundEnabled === "boolean") {
     elements.soundEnabled.checked = settings.soundEnabled;
+  }
+
+  // 步骤 2：pal95 当前优先保证“能进游戏”，因此在读取旧设置后仍强制回到静音兼容默认值。
+  if (elements.profileSelect.value === "pal95") {
+    elements.soundEnabled.checked = false;
   }
 
   if (typeof settings.autoLaunchEnabled === "boolean") {
