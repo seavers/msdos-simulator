@@ -35,6 +35,7 @@ const runtime = new EmulatorRuntime(terminal, {
 });
 const AUTO_PAUSE_REASON_PAGE_BLUR = "页面失焦";
 const AUTO_PAUSE_REASON_DOS_PROMPT = "dos-prompt-idle";
+const SETTINGS_KEY = "msdos-simulator-settings";
 
 let profiles = [];
 let serverImages = [];
@@ -80,26 +81,38 @@ async function bootstrap() {
   }
   elements.runtimeMode.textContent = `适配器: ${elements.adapterSelect.value}`;
 
+  // 步骤 4：从 localStorage 恢复上次用户选择的参数，覆盖默认值。
+  loadSettings();
+
+  elements.runtimeMode.textContent = `适配器: ${elements.adapterSelect.value}`;
+
   terminal.renderStatus("MS-DOS 6.0 Simulator", "请选择 dos6.22.img 并点击启动。");
   appendLog("系统已就绪，当前首要目标是通过 v86 启动 dos6.22.img。");
 }
 
 function bindEvents() {
   elements.fileInput.addEventListener("change", handleFileSelected);
-  elements.imageSource.addEventListener("change", syncImageSource);
+  elements.imageSource.addEventListener("change", () => { syncImageSource(); saveSettings(); });
   elements.pauseButton.addEventListener("click", handlePauseToggle);
   elements.powerSaveEnabled.addEventListener("change", () => {
     appendLog(elements.powerSaveEnabled.checked ? "节能模式已开启。" : "节能模式已关闭。");
+    saveSettings();
   });
   elements.promptIdleEnabled.addEventListener("change", () => {
     appendLog(elements.promptIdleEnabled.checked ? "DOS 提示符自动 idle 已开启。" : "DOS 提示符自动 idle 已关闭。");
+    saveSettings();
   });
-  elements.profileSelect.addEventListener("change", syncProfileSelection);
-  elements.serverImageSelect.addEventListener("change", syncSelectedImageStatus);
+  elements.profileSelect.addEventListener("change", () => { syncProfileSelection(); saveSettings(); });
+  elements.serverImageSelect.addEventListener("change", () => { syncSelectedImageStatus(); saveSettings(); });
   elements.adapterSelect.addEventListener("change", () => {
     elements.runtimeMode.textContent = `适配器: ${elements.adapterSelect.value}`;
     syncPauseButton();
+    saveSettings();
   });
+  elements.gamePackageSelect.addEventListener("change", saveSettings);
+  elements.memorySize.addEventListener("change", saveSettings);
+  elements.cpuProfile.addEventListener("change", saveSettings);
+  elements.soundEnabled.addEventListener("change", saveSettings);
   elements.refreshImagesButton.addEventListener("click", refreshServerImages);
   elements.bootButton.addEventListener("click", handleBoot);
   elements.resetButton.addEventListener("click", handleReset);
@@ -543,6 +556,85 @@ function inferDriveType(fileName, size) {
   }
 
   return "hardDisk";
+}
+
+function saveSettings() {
+  const settings = {
+    imageSource: elements.imageSource.value,
+    serverImage: elements.serverImageSelect.value,
+    adapter: elements.adapterSelect.value,
+    profile: elements.profileSelect.value,
+    gamePackage: elements.gamePackageSelect.value,
+    memorySize: elements.memorySize.value,
+    cpuProfile: elements.cpuProfile.value,
+    soundEnabled: elements.soundEnabled.checked,
+    powerSaveEnabled: elements.powerSaveEnabled.checked,
+    promptIdleEnabled: elements.promptIdleEnabled.checked
+  };
+
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // localStorage 不可用（如隐私模式）时静默忽略
+  }
+}
+
+function loadSettings() {
+  let settings;
+
+  try {
+    settings = JSON.parse(localStorage.getItem(SETTINGS_KEY));
+  } catch {
+    return;
+  }
+
+  if (!settings) {
+    return;
+  }
+
+  // 按顺序恢复：先设置基础选择项，再设置依赖动态数据的下拉框
+  if (settings.imageSource) {
+    elements.imageSource.value = settings.imageSource;
+    syncImageSource();
+  }
+
+  if (settings.adapter) {
+    elements.adapterSelect.value = settings.adapter;
+  }
+
+  if (settings.profile && Array.from(elements.profileSelect.options).some((opt) => opt.value === settings.profile)) {
+    elements.profileSelect.value = settings.profile;
+  }
+
+  if (settings.serverImage && Array.from(elements.serverImageSelect.options).some((opt) => opt.value === settings.serverImage)) {
+    elements.serverImageSelect.value = settings.serverImage;
+  }
+
+  if (settings.gamePackage && Array.from(elements.gamePackageSelect.options).some((opt) => opt.value === settings.gamePackage)) {
+    elements.gamePackageSelect.value = settings.gamePackage;
+  }
+
+  if (settings.memorySize) {
+    elements.memorySize.value = settings.memorySize;
+  }
+
+  if (settings.cpuProfile) {
+    elements.cpuProfile.value = settings.cpuProfile;
+  }
+
+  if (typeof settings.soundEnabled === "boolean") {
+    elements.soundEnabled.checked = settings.soundEnabled;
+  }
+
+  if (typeof settings.powerSaveEnabled === "boolean") {
+    elements.powerSaveEnabled.checked = settings.powerSaveEnabled;
+  }
+
+  if (typeof settings.promptIdleEnabled === "boolean") {
+    elements.promptIdleEnabled.checked = settings.promptIdleEnabled;
+  }
+
+  syncSelectedImageStatus();
 }
 
 function createDisplayManager(canvas, v86Screen) {
