@@ -21,7 +21,6 @@ const elements = {
   serverImageField: document.querySelector("#server-image-field"),
   serverImageSelect: document.querySelector("#server-image-select"),
   soundEnabled: document.querySelector("#sound-enabled"),
-  autoLaunchEnabled: document.querySelector("#auto-launch-enabled"),
   uploadImageField: document.querySelector("#upload-image-field"),
   v86Screen: document.querySelector("#v86-screen")
 };
@@ -76,8 +75,8 @@ async function bootstrap() {
   // 步骤 4：从 localStorage 恢复上次用户选择的参数，覆盖默认值。
   loadSettings();
 
-  terminal.renderStatus("MS-DOS 6.0 Simulator", "请选择 dos6.22.img 并点击启动。");
-  appendLog("系统已就绪，当前首要目标是通过 v86 启动 dos6.22.img。");
+  terminal.renderStatus("MS-DOS 6.0 Simulator", "请选择 msdos622_dosidle_a.img 并点击启动。");
+  appendLog("系统已就绪，当前首要目标是通过 v86 启动 msdos622_dosidle_a.img。");
 }
 
 function bindEvents() {
@@ -90,7 +89,6 @@ function bindEvents() {
   elements.memorySize.addEventListener("change", saveSettings);
   elements.cpuProfile.addEventListener("change", saveSettings);
   elements.soundEnabled.addEventListener("change", saveSettings);
-  elements.autoLaunchEnabled.addEventListener("change", saveSettings);
   elements.refreshImagesButton.addEventListener("click", refreshServerImages);
   elements.bootButton.addEventListener("click", handleBoot);
   elements.resetButton.addEventListener("click", handleReset);
@@ -166,7 +164,6 @@ async function handleBoot() {
   const selectedImage = resolveSelectedImage();
   const attachments = await resolveSelectedAttachments(config);
   const bootImage = resolveBootImage(selectedImage, attachments);
-  const startupAutomation = resolveStartupAutomation(attachments, config);
 
   inputBuffer = "";
   terminal.setInputBuffer("");
@@ -184,8 +181,7 @@ async function handleBoot() {
     imageMeta: bootImage.imageMeta,
     onLog: appendLog,
     profile: selectedProfile,
-    runtimeAssets,
-    startupAutomation
+    runtimeAssets
   });
 
   syncPauseButton();
@@ -231,7 +227,6 @@ function syncProfileSelection() {
 
   if (profile.id === "pal95" && Array.from(elements.gamePackageSelect.options).some((option) => option.value === "pal95")) {
     elements.gamePackageSelect.value = "pal95";
-    elements.autoLaunchEnabled.checked = true;
     appendLog("仙剑 95 兼容预设默认使用静音启动，用于绕过 PLAY 模块报错。");
   }
 }
@@ -247,8 +242,7 @@ function collectConfig(profile = null) {
   return {
     memoryMb: Number(elements.memorySize.value || profile?.memoryMb || 16),
     cpuProfile: elements.cpuProfile.value || profile?.cpuProfile || "486dx2",
-    soundEnabled: elements.soundEnabled.checked,
-    autoLaunchEnabled: elements.autoLaunchEnabled.checked
+    soundEnabled: elements.soundEnabled.checked
   };
 }
 
@@ -270,7 +264,7 @@ function populateServerImages(items) {
   }
 
   elements.serverImageSelect.innerHTML = items.map((image) => `<option value="${image.name}">${image.name} · ${image.sizeLabel} · ${image.driveType}</option>`).join("");
-  const preferredImage = items.find((image) => image.name.toLowerCase() === "dos6.22.img");
+  const preferredImage = items.find((image) => image.name.toLowerCase() === "msdos622_dosidle_a.img");
 
   if (preferredImage) {
     elements.serverImageSelect.value = preferredImage.name;
@@ -334,7 +328,7 @@ function resolveSelectedImage() {
     const selectedImage = serverImages.find((image) => image.name === elements.serverImageSelect.value);
 
     if (!selectedImage) {
-      throw new Error("服务端固定目录中未找到可启动镜像，请先把 dos6.22.img 放入 storage/images/。");
+      throw new Error("服务端固定目录中未找到可启动镜像，请先把 msdos622_dosidle_a.img 放入 storage/images/。");
     }
 
     return {
@@ -389,7 +383,7 @@ async function resolveSelectedAttachments(config) {
 
   appendLog(`扩展硬盘已就绪: ${materializedPackage.name} -> ${materializedPackage.mount.preferredSlot.toUpperCase()} (${materializedPackage.mount.sizeLabel})，当前推荐命令为 ${materializedPackage.launchCommand.includes("RUNSAFE") ? "RUNSAFE" : "RUNPAL"}。`);
   if (materializedPackage.bootDisk?.managedBoot) {
-    appendLog(`已生成仙剑专用启动盘: ${materializedPackage.bootDisk.name}，将自动替换基础 dos6.22.img 引导。`);
+    appendLog(`已生成仙剑专用启动盘: ${materializedPackage.bootDisk.name}，将自动替换基础 msdos622_dosidle_a.img 引导。`);
   }
   if (materializedPackage.paths?.bootDiskPath) {
     appendLog(`启动盘路径: ${materializedPackage.paths.bootDiskPath}`);
@@ -501,8 +495,7 @@ function saveSettings() {
     gamePackage: elements.gamePackageSelect.value,
     memorySize: elements.memorySize.value,
     cpuProfile: elements.cpuProfile.value,
-    soundEnabled: elements.soundEnabled.checked,
-    autoLaunchEnabled: elements.autoLaunchEnabled.checked
+    soundEnabled: elements.soundEnabled.checked
   };
 
   try {
@@ -560,32 +553,7 @@ function loadSettings() {
     elements.soundEnabled.checked = false;
   }
 
-  if (typeof settings.autoLaunchEnabled === "boolean") {
-    elements.autoLaunchEnabled.checked = settings.autoLaunchEnabled;
-  }
-
   syncSelectedImageStatus();
-}
-
-function resolveStartupAutomation(attachments, config) {
-  if (attachments.some((attachment) => attachment.bootDisk?.managedBoot)) {
-    return null;
-  }
-
-  if (!config.autoLaunchEnabled) {
-    return null;
-  }
-
-  const autoLaunchAttachment = attachments.find((attachment) => attachment.launchCommand);
-
-  if (!autoLaunchAttachment) {
-    return null;
-  }
-
-  return {
-    label: `${autoLaunchAttachment.label} 自动启动`,
-    commandText: autoLaunchAttachment.launchCommand
-  };
 }
 
 function appendCompatibilityLogs(attachments) {

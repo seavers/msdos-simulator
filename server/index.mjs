@@ -22,7 +22,7 @@ const v86PackageRoot = await resolvePackageRoot("v86/package.json");
 const v86BuildRoot = v86PackageRoot ? path.join(v86PackageRoot, "build") : null;
 const supportedDiskExtensions = new Set([".img", ".ima", ".vfd", ".flp", ".iso", ".bin"]);
 const execFileAsync = promisify(execFile);
-const defaultBootDiskImagePath = path.join(diskImagesRoot, "dos6.22.img");
+const defaultBootDiskImagePath = path.join(diskImagesRoot, "msdos622_dosidle_a.img");
 const gamePackages = [
   {
     id: "pal95",
@@ -237,10 +237,10 @@ async function listDiskImages() {
   }
 
   diskImages.sort((left, right) => {
-    if (left.name.toLowerCase() === "dos6.22.img") {
+    if (left.name.toLowerCase() === "msdos622_dosidle_a.img") {
       return -1;
     }
-    if (right.name.toLowerCase() === "dos6.22.img") {
+    if (right.name.toLowerCase() === "msdos622_dosidle_a.img") {
       return 1;
     }
     return left.name.localeCompare(right.name, "zh-CN");
@@ -425,7 +425,7 @@ function buildPal95SilentSetup(originalSetupBuffer) {
 
 async function materializePal95BootDisk(launchSoundEnabled) {
   if (!existsSync(defaultBootDiskImagePath)) {
-    throw new Error("缺少基础启动盘 dos6.22.img，无法生成仙剑兼容启动盘。");
+    throw new Error("缺少基础启动盘 msdos622_dosidle_a.img，无法生成仙剑兼容启动盘。");
   }
 
   const imageFileName = launchSoundEnabled ? "pal95-boot-sound.img" : "pal95-boot-safe.img";

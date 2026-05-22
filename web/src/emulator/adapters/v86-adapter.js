@@ -1,8 +1,6 @@
 let v86ModulePromise = null;
 const BOOT_ORDER_FLOPPY_FIRST = 0x321;
-const DOS_PROMPT_PATTERN = /^[AC]:\\>\s*$/;
 const SCREEN_SCAN_INTERVAL_MSEC = 250;
-const STARTUP_AUTOMATION_SETTLE_MSEC = 250;
 const BOOT_INTERACTION_SETTLE_MSEC = 200;
 const EMM386_READY_PATTERN = /Press any key when ready\.\.\./i;
 
@@ -14,9 +12,6 @@ export class V86Adapter {
     this.emulator = null;
     this.context = null;
     this.paused = false;
-    this.startupAutomationGeneration = 0;
-    this.pendingStartupAutomation = null;
-    this.startupAutomationTimer = null;
     this.bootInteractionGeneration = 0;
     this.completedBootInteractions = new Set();
     this.bootInteractionTimer = null;
@@ -24,7 +19,7 @@ export class V86Adapter {
 
   async boot(context) {
     if (!context.diskImage) {
-      throw new Error("未选择可启动镜像，请先选择 dos6.22.img。");
+      throw new Error("未选择可启动镜像，请先选择 msdos622_dosidle_a.img。");
     }
 
     if (!context.runtimeAssets?.v86?.ready) {
@@ -42,7 +37,6 @@ export class V86Adapter {
     // 步骤 1：根据启动盘与附加盘位构造 v86 需要的块设备描述。
     const driveOptions = await this.createDriveOptions(context.diskImage, context.attachments || []);
     const cpuOptions = resolveCpuOptions(context.config.cpuProfile);
-    this.pendingStartupAutomation = normalizeStartupAutomation(context.startupAutomation);
 
     // 步骤 2：初始化 BIOS、VGA、内存与启动顺序，真正进入 DOS 引导链路。
     this.display = context.display;
@@ -91,9 +85,8 @@ export class V86Adapter {
       context.onLog?.(`镜像资源加载失败: ${detail.file_name}`);
     });
 
-    // 步骤 4：先处理 DOS 启动过程中的交互页，再在提示符出现时执行自动启动编排。
+    // 步骤 4：处理 DOS 启动过程中的交互页。
     this.installBootInteractionAutomation();
-    this.installStartupAutomation();
   }
 
   async handleCommand() {
@@ -137,7 +130,6 @@ export class V86Adapter {
 
   async destroy() {
     this.teardownBootInteractionAutomation();
-    this.teardownStartupAutomation();
 
     if (!this.emulator) {
       this.display?.clearV86Surface?.();
@@ -242,80 +234,6 @@ export class V86Adapter {
     }, SCREEN_SCAN_INTERVAL_MSEC);
   }
 
-  installStartupAutomation() {
-    this.cancelStartupAutomationLoop();
-
-    if (!this.emulator || !this.hasPendingStartupAutomation()) {
-      return;
-    }
-
-    this.startupAutomationGeneration += 1;
-    const generation = this.startupAutomationGeneration;
-    this.context?.onLog?.(`已启用自动启动编排，等待 DOS 提示符后执行 ${this.pendingStartupAutomation.label}。`);
-    this.scheduleStartupAutomationScan(generation);
-  }
-
-  teardownStartupAutomation() {
-    this.cancelStartupAutomationLoop();
-    this.pendingStartupAutomation = null;
-  }
-
-  cancelStartupAutomationLoop() {
-    this.startupAutomationGeneration += 1;
-
-    if (this.startupAutomationTimer) {
-      clearTimeout(this.startupAutomationTimer);
-      this.startupAutomationTimer = null;
-    }
-  }
-
-  hasPendingStartupAutomation() {
-    return Boolean(this.pendingStartupAutomation?.commandText);
-  }
-
-  scheduleStartupAutomationScan(generation) {
-    if (!this.emulator || generation !== this.startupAutomationGeneration || !this.hasPendingStartupAutomation() || this.startupAutomationTimer) {
-      return;
-    }
-
-    this.startupAutomationTimer = window.setTimeout(async () => {
-      this.startupAutomationTimer = null;
-
-      if (generation !== this.startupAutomationGeneration || !this.emulator || !this.hasPendingStartupAutomation()) {
-        return;
-      }
-
-      await this.tryRunStartupAutomation();
-      this.scheduleStartupAutomationScan(generation);
-    }, SCREEN_SCAN_INTERVAL_MSEC);
-  }
-
-  async tryRunStartupAutomation() {
-    if (!this.emulator || this.paused || !this.emulator.is_running() || !this.hasPendingStartupAutomation()) {
-      return false;
-    }
-
-    const matchedPrompt = this.readPromptFromScreen();
-    if (!matchedPrompt) {
-      return false;
-    }
-
-    const automation = this.pendingStartupAutomation;
-    this.pendingStartupAutomation = null;
-    this.display?.focusV86Surface?.();
-    this.context?.onLog?.(`检测到 DOS 提示符 ${matchedPrompt}，开始执行 ${automation.label}。`);
-    await sleep(STARTUP_AUTOMATION_SETTLE_MSEC);
-
-    if (!this.emulator || this.paused || !this.emulator.is_running()) {
-      this.pendingStartupAutomation = automation;
-      return false;
-    }
-
-    this.emulator.keyboard_send_text(automation.commandText);
-    this.context?.onLog?.(`已向 DOS 注入启动命令: ${automation.description}`);
-    return true;
-  }
-
   async tryHandleBootInteraction(interactionId, interaction) {
     if (!this.emulator || this.paused || !this.emulator.is_running() || this.completedBootInteractions.has(interactionId)) {
       return false;
@@ -337,10 +255,6 @@ export class V86Adapter {
 
     this.emulator.keyboard_send_text(interaction.keyText);
     return true;
-  }
-
-  readPromptFromScreen() {
-    return this.readScreenLine(DOS_PROMPT_PATTERN);
   }
 
   readScreenLine(pattern) {
@@ -372,20 +286,6 @@ function resolveCpuOptions(cpuProfile) {
   }
 
   return { label: "486DX2 / CPUID-4", cpuid_level: 4 };
-}
-
-function normalizeStartupAutomation(startupAutomation) {
-  if (!startupAutomation?.commandText) {
-    return null;
-  }
-
-  const compactCommand = startupAutomation.commandText.replace(/\r/g, " -> ").trim();
-
-  return {
-    label: startupAutomation.label || "自动启动",
-    description: compactCommand,
-    commandText: startupAutomation.commandText
-  };
 }
 
 function sleep(timeoutMsec) {

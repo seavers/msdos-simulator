@@ -11,7 +11,7 @@
       <header class="hero">
         <div>
           <p class="eyebrow">MS-DOS 6.0 Web Simulator</p>
-          <h1>以 dos6.22.img 启动为首要目标的 Web DOS 模拟器</h1>
+          <h1>以 msdos622_dosidle_a.img 启动为首要目标的 Web DOS 模拟器</h1>
           <p class="summary">前端负责 Canvas 与模拟器画面承载，后端负责镜像目录、运行时资源、会话记录与启动参数，真实 DOS 由 `v86` 接入。</p>
         </div>
         <div class="hero-status" id="hero-status">引擎未启动</div>
@@ -47,7 +47,7 @@
               <span>本地镜像</span>
               <input id="image-file" type="file" accept=".img,.ima,.vfd,.flp,.bin,.iso" />
             </label>
-            <p class="field-note">固定目录：`storage/images/`，推荐文件名：`dos6.22.img`</p>
+            <p class="field-note">固定目录：`storage/images/`，默认镜像：`msdos622_dosidle_a.img`</p>
             <div class="status-pills">
               <span id="image-status" class="status-pill">未选择镜像</span>
               <span id="runtime-assets-status" class="status-pill">v86 运行时检测中</span>
@@ -87,16 +87,12 @@
               <input id="sound-enabled" type="checkbox" checked />
               <span>启用 SB16 / AdLib 兼容模式</span>
             </label>
-            <label class="field checkbox">
-              <input id="auto-launch-enabled" type="checkbox" checked />
-              <span>检测到 DOS 提示符后自动执行游戏启动命令</span>
-            </label>
           </section>
 
           <section class="card">
             <h2>本地文档</h2>
             <ul class="hint-list">
-              <li>第一目标是让 `dos6.22.img` 真实启动到 DOS 命令行。</li>
+              <li>第一目标是让 `msdos622_dosidle_a.img` 真实启动到 DOS 命令行。</li>
               <li>若固定目录没有镜像，也可以直接从本地上传启动。</li>
               <li>仙剑 95 的专项兼容将在 DOS 引导稳定后继续推进。</li>
             </ul>
