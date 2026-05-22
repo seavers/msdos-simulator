@@ -3,6 +3,8 @@ const BOOT_ORDER_FLOPPY_FIRST = 0x321;
 const DOS_PROMPT_PATTERN = /^[AC]:\\>\s*$/;
 const DOS_PROMPT_WAIT_TIMEOUT_MSEC = 1500;
 const STARTUP_AUTOMATION_SETTLE_MSEC = 250;
+const BOOT_INTERACTION_SETTLE_MSEC = 200;
+const EMM386_READY_PATTERN = /Press any key when ready\.\.\./i;
 
 export class V86Adapter {
   constructor(terminal) {
@@ -14,6 +16,8 @@ export class V86Adapter {
     this.paused = false;
     this.startupAutomationGeneration = 0;
     this.pendingStartupAutomation = null;
+    this.bootInteractionGeneration = 0;
+    this.completedBootInteractions = new Set();
   }
 
   async boot(context) {
@@ -73,6 +77,10 @@ export class V86Adapter {
       screenContainer.focus();
     });
 
+    this.emulator.add_listener("emulator-stopped", () => {
+      context.onLog?.("v86 运行已停止。");
+    });
+
     this.emulator.add_listener("screen-set-size", ([width, height, bpp]) => {
       context.onLog?.(`VGA 模式切换: ${width}x${height}x${bpp}`);
     });
@@ -81,7 +89,8 @@ export class V86Adapter {
       context.onLog?.(`镜像资源加载失败: ${detail.file_name}`);
     });
 
-    // 步骤 4：在 DOS 提示符出现时优先执行启动编排。
+    // 步骤 4：先处理 DOS 启动过程中的交互页，再在提示符出现时执行自动启动编排。
+    this.installBootInteractionAutomation();
     this.installStartupAutomation();
   }
 
@@ -125,6 +134,7 @@ export class V86Adapter {
   }
 
   async destroy() {
+    this.teardownBootInteractionAutomation();
     this.teardownStartupAutomation();
 
     if (!this.emulator) {
@@ -141,6 +151,7 @@ export class V86Adapter {
     this.emulator = null;
     this.context = null;
     this.paused = false;
+    this.completedBootInteractions.clear();
     this.display?.clearV86Surface?.();
   }
 
@@ -182,6 +193,41 @@ export class V86Adapter {
 
   async createImageDescriptor(diskImage) {
     return diskImage.source === "upload" ? { buffer: await diskImage.file.arrayBuffer() } : { url: diskImage.url };
+  }
+
+  installBootInteractionAutomation() {
+    this.teardownBootInteractionAutomation();
+
+    if (!this.emulator) {
+      return;
+    }
+
+    this.bootInteractionGeneration += 1;
+    const generation = this.bootInteractionGeneration;
+    this.startBootInteractionLoop(generation);
+  }
+
+  teardownBootInteractionAutomation() {
+    this.bootInteractionGeneration += 1;
+    this.completedBootInteractions.clear();
+  }
+
+  async startBootInteractionLoop(generation) {
+    while (this.emulator && generation === this.bootInteractionGeneration) {
+      const emsPromptFound = await this.emulator.wait_until_vga_screen_contains(EMM386_READY_PATTERN, {
+        timeout_msec: DOS_PROMPT_WAIT_TIMEOUT_MSEC
+      });
+
+      if (generation !== this.bootInteractionGeneration || !this.emulator || !emsPromptFound) {
+        continue;
+      }
+
+      await this.tryHandleBootInteraction("emm386-ready", {
+        pattern: EMM386_READY_PATTERN,
+        logMessage: "检测到 EMM386 等待按键提示，已自动发送回车继续 DOS 启动。",
+        keyText: "\r"
+      });
+    }
   }
 
   installStartupAutomation() {
@@ -250,7 +296,34 @@ export class V86Adapter {
     return true;
   }
 
+  async tryHandleBootInteraction(interactionId, interaction) {
+    if (!this.emulator || this.paused || !this.emulator.is_running() || this.completedBootInteractions.has(interactionId)) {
+      return false;
+    }
+
+    const matchedText = this.readScreenLine(interaction.pattern);
+    if (!matchedText) {
+      return false;
+    }
+
+    this.completedBootInteractions.add(interactionId);
+    this.display?.focusV86Surface?.();
+    this.context?.onLog?.(interaction.logMessage);
+    await sleep(BOOT_INTERACTION_SETTLE_MSEC);
+
+    if (!this.emulator || this.paused || !this.emulator.is_running()) {
+      return false;
+    }
+
+    this.emulator.keyboard_send_text(interaction.keyText);
+    return true;
+  }
+
   readPromptFromScreen() {
+    return this.readScreenLine(DOS_PROMPT_PATTERN);
+  }
+
+  readScreenLine(pattern) {
     const rows = this.emulator?.screen_adapter?.get_text_screen?.();
 
     if (!rows || rows.length === 0) {
@@ -260,7 +333,7 @@ export class V86Adapter {
     for (let index = rows.length - 1; index >= 0; index -= 1) {
       const rowText = rows[index].trimRight();
 
-      if (DOS_PROMPT_PATTERN.test(rowText)) {
+      if (pattern.test(rowText)) {
         return rowText;
       }
     }
