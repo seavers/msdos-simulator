@@ -471,7 +471,7 @@ function buildPal95ConfigSys() {
   return [
     "DEVICE=HIMEM.SYS /testmem:off",
     "DOS=HIGH,UMB",
-    "DEVICE=EMM386.EXE RAM",
+    "DEVICE=EMM386.EXE RAM FRAME=CC00 I=B000-B7FF I=CC00-EFFF",
     "FILES=40",
     "BUFFERS=30",
     "STACKS=9,256",

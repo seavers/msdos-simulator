@@ -1,7 +1,7 @@
 let v86ModulePromise = null;
 const BOOT_ORDER_FLOPPY_FIRST = 0x321;
 const DOS_PROMPT_PATTERN = /^[AC]:\\>\s*$/;
-const DOS_PROMPT_WAIT_TIMEOUT_MSEC = 1500;
+const SCREEN_SCAN_INTERVAL_MSEC = 250;
 const STARTUP_AUTOMATION_SETTLE_MSEC = 250;
 const BOOT_INTERACTION_SETTLE_MSEC = 200;
 const EMM386_READY_PATTERN = /Press any key when ready\.\.\./i;
@@ -16,8 +16,10 @@ export class V86Adapter {
     this.paused = false;
     this.startupAutomationGeneration = 0;
     this.pendingStartupAutomation = null;
+    this.startupAutomationTimer = null;
     this.bootInteractionGeneration = 0;
     this.completedBootInteractions = new Set();
+    this.bootInteractionTimer = null;
   }
 
   async boot(context) {
@@ -204,22 +206,30 @@ export class V86Adapter {
 
     this.bootInteractionGeneration += 1;
     const generation = this.bootInteractionGeneration;
-    this.startBootInteractionLoop(generation);
+    this.scheduleBootInteractionScan(generation);
   }
 
   teardownBootInteractionAutomation() {
     this.bootInteractionGeneration += 1;
+
+    if (this.bootInteractionTimer) {
+      clearTimeout(this.bootInteractionTimer);
+      this.bootInteractionTimer = null;
+    }
+
     this.completedBootInteractions.clear();
   }
 
-  async startBootInteractionLoop(generation) {
-    while (this.emulator && generation === this.bootInteractionGeneration) {
-      const emsPromptFound = await this.emulator.wait_until_vga_screen_contains(EMM386_READY_PATTERN, {
-        timeout_msec: DOS_PROMPT_WAIT_TIMEOUT_MSEC
-      });
+  scheduleBootInteractionScan(generation) {
+    if (!this.emulator || generation !== this.bootInteractionGeneration || this.bootInteractionTimer) {
+      return;
+    }
 
-      if (generation !== this.bootInteractionGeneration || !this.emulator || !emsPromptFound) {
-        continue;
+    this.bootInteractionTimer = window.setTimeout(async () => {
+      this.bootInteractionTimer = null;
+
+      if (generation !== this.bootInteractionGeneration || !this.emulator) {
+        return;
       }
 
       await this.tryHandleBootInteraction("emm386-ready", {
@@ -227,7 +237,9 @@ export class V86Adapter {
         logMessage: "检测到 EMM386 等待按键提示，已自动发送回车继续 DOS 启动。",
         keyText: "\r"
       });
-    }
+
+      this.scheduleBootInteractionScan(generation);
+    }, SCREEN_SCAN_INTERVAL_MSEC);
   }
 
   installStartupAutomation() {
@@ -240,7 +252,7 @@ export class V86Adapter {
     this.startupAutomationGeneration += 1;
     const generation = this.startupAutomationGeneration;
     this.context?.onLog?.(`已启用自动启动编排，等待 DOS 提示符后执行 ${this.pendingStartupAutomation.label}。`);
-    this.startStartupAutomationLoop(generation);
+    this.scheduleStartupAutomationScan(generation);
   }
 
   teardownStartupAutomation() {
@@ -250,24 +262,32 @@ export class V86Adapter {
 
   cancelStartupAutomationLoop() {
     this.startupAutomationGeneration += 1;
+
+    if (this.startupAutomationTimer) {
+      clearTimeout(this.startupAutomationTimer);
+      this.startupAutomationTimer = null;
+    }
   }
 
   hasPendingStartupAutomation() {
     return Boolean(this.pendingStartupAutomation?.commandText);
   }
 
-  async startStartupAutomationLoop(generation) {
-    while (this.emulator && generation === this.startupAutomationGeneration && this.hasPendingStartupAutomation()) {
-      const promptFound = await this.emulator.wait_until_vga_screen_contains(DOS_PROMPT_PATTERN, {
-        timeout_msec: DOS_PROMPT_WAIT_TIMEOUT_MSEC
-      });
+  scheduleStartupAutomationScan(generation) {
+    if (!this.emulator || generation !== this.startupAutomationGeneration || !this.hasPendingStartupAutomation() || this.startupAutomationTimer) {
+      return;
+    }
 
-      if (generation !== this.startupAutomationGeneration || !this.emulator || !promptFound) {
-        continue;
+    this.startupAutomationTimer = window.setTimeout(async () => {
+      this.startupAutomationTimer = null;
+
+      if (generation !== this.startupAutomationGeneration || !this.emulator || !this.hasPendingStartupAutomation()) {
+        return;
       }
 
       await this.tryRunStartupAutomation();
-    }
+      this.scheduleStartupAutomationScan(generation);
+    }, SCREEN_SCAN_INTERVAL_MSEC);
   }
 
   async tryRunStartupAutomation() {
