@@ -306,7 +306,7 @@ async function materializeGamePackage(packageId) {
       ].join("\r\n") + "\r\n"
     },
     {
-      name: "PALREADME.TXT",
+      name: "PALREAD.TXT",
       content: [
         "PAL95 DOS 模拟提示",
         "",

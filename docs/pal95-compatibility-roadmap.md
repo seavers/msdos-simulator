@@ -13,7 +13,7 @@
 - 已额外注入：
   - `RUNPAL.BAT`
   - `PALDIAG.BAT`
-  - `PALREADME.TXT`
+  - `PALREAD.TXT`
 
 ### 2.2 内存
 
