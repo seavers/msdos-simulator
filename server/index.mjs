@@ -1,8 +1,11 @@
 import { createServer } from "node:http";
-import { mkdir, open, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { buildFat16Image, describeSourceDirectory } from "./fat16-image-builder.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -18,6 +21,8 @@ const v86BiosRoot = path.join(projectRoot, "storage", "runtime", "v86", "bios");
 const v86PackageRoot = await resolvePackageRoot("v86/package.json");
 const v86BuildRoot = v86PackageRoot ? path.join(v86PackageRoot, "build") : null;
 const supportedDiskExtensions = new Set([".img", ".ima", ".vfd", ".flp", ".iso", ".bin"]);
+const execFileAsync = promisify(execFile);
+const defaultBootDiskImagePath = path.join(diskImagesRoot, "dos6.22.img");
 const gamePackages = [
   {
     id: "pal95",
@@ -290,6 +295,7 @@ async function materializeGamePackage(packageId, options = {}) {
   const launchSoundEnabled = Boolean(options.soundEnabled);
   const originalSetupBuffer = await readFile(path.join(gamePackage.sourceDirectory, "SETUP.DAT"));
   const silentSetupBuffer = buildPal95SilentSetup(originalSetupBuffer);
+  const bootDisk = await materializePal95BootDisk(launchSoundEnabled);
   const virtualFiles = [
     {
       name: "RUNPAL.BAT",
@@ -364,6 +370,7 @@ async function materializeGamePackage(packageId, options = {}) {
     name: gamePackage.name,
     launchCommand: launchSoundEnabled ? "C:\\\rRUNPAL\r" : gamePackage.launchCommand,
     compatibility: gamePackage.compatibility,
+    bootDisk,
     mount: {
       name: gamePackage.imageFileName,
       url: `/generated-disks/${encodeURIComponent(gamePackage.imageFileName)}`,
@@ -401,6 +408,72 @@ function buildPal95SilentSetup(originalSetupBuffer) {
   }
 
   return silentSetupBuffer;
+}
+
+async function materializePal95BootDisk(launchSoundEnabled) {
+  if (!existsSync(defaultBootDiskImagePath)) {
+    throw new Error("缺少基础启动盘 dos6.22.img，无法生成仙剑兼容启动盘。");
+  }
+
+  const imageFileName = launchSoundEnabled ? "pal95-boot-sound.img" : "pal95-boot-safe.img";
+  const imagePath = path.join(generatedDiskRoot, imageFileName);
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "pal95-boot-"));
+  const configPath = path.join(tempRoot, "CONFIG.SYS");
+  const autoexecPath = path.join(tempRoot, "AUTOEXEC.BAT");
+
+  try {
+    // 步骤 1：复制基础 DOS 软盘，保留现有系统文件与驱动，再覆盖仙剑所需的系统配置。
+    await copyFile(defaultBootDiskImagePath, imagePath);
+
+    await writeFile(configPath, buildPal95ConfigSys(), "ascii");
+    await writeFile(autoexecPath, buildPal95AutoexecBat(launchSoundEnabled), "ascii");
+
+    // 步骤 2：借助 mtools 直接写回 FAT12 软盘镜像，避免再手写一套启动盘编辑逻辑。
+    await execFileAsync("mcopy", ["-o", "-i", imagePath, configPath, "::CONFIG.SYS"]);
+    await execFileAsync("mcopy", ["-o", "-i", imagePath, autoexecPath, "::AUTOEXEC.BAT"]);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+
+  const imageStat = await stat(imagePath);
+
+  return {
+    name: imageFileName,
+    url: `/generated-disks/${encodeURIComponent(imageFileName)}`,
+    size: imageStat.size,
+    sizeLabel: formatBytes(imageStat.size),
+    driveType: "floppy",
+    managedBoot: true
+  };
+}
+
+function buildPal95ConfigSys() {
+  return [
+    "DEVICE=HIMEM.SYS /testmem:off",
+    "DOS=HIGH,UMB",
+    "DEVICE=EMM386.EXE NOEMS",
+    "FILES=40",
+    "BUFFERS=30",
+    "STACKS=9,256",
+    "",
+    "DEVICE=cd1.SYS /D:banana",
+    "LASTDRIVE=Z",
+    ""
+  ].join("\r\n");
+}
+
+function buildPal95AutoexecBat(launchSoundEnabled) {
+  const launchCommand = launchSoundEnabled ? "RUNPAL" : "RUNSAFE";
+
+  return [
+    "@echo off",
+    "PROMPT $P$G",
+    "SET TEMP=C:\\",
+    "MSCDEX.EXE /D:banana /L:R",
+    "C:",
+    launchCommand,
+    ""
+  ].join("\r\n");
 }
 
 async function readJson(filePath, fallback) {
