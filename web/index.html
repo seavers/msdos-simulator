@@ -91,15 +91,6 @@
               <input id="auto-launch-enabled" type="checkbox" checked />
               <span>检测到 DOS 提示符后自动执行游戏启动命令</span>
             </label>
-            <label class="field checkbox">
-              <input id="power-save-enabled" type="checkbox" checked />
-              <span>启用节能模式（页面失焦自动暂停）</span>
-            </label>
-            <label class="field checkbox">
-              <input id="prompt-idle-enabled" type="checkbox" checked />
-              <span>启用 DOS 提示符自动 idle（识别 `A:\>` / `C:\>`）</span>
-            </label>
-            <p class="field-note">页面失焦时会自动暂停，恢复焦点后自动继续；另外会结合 `wait_until_vga_screen_contains()` 与 `screen-put-char` 监听，在屏幕出现 `A:\>` 或 `C:\>` 时自动 idle 暂停。</p>
           </section>
 
           <section class="card">
