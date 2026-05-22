@@ -163,13 +163,12 @@ async function handleBoot() {
   const config = collectConfig(selectedProfile);
   const selectedImage = resolveSelectedImage();
   const attachments = await resolveSelectedAttachments(config);
-  const bootImage = resolveBootImage(selectedImage, attachments);
 
   inputBuffer = "";
   terminal.setInputBuffer("");
   elements.runtimeMode.textContent = `适配器: v86`;
 
-  appendLog(`准备启动: adapter=v86, image=${bootImage.imageMeta.name}, profile=${selectedProfile?.name || "custom"}, attachments=${attachments.length}`);
+  appendLog(`准备启动: adapter=v86, image=${selectedImage.imageMeta.name}, profile=${selectedProfile?.name || "custom"}, attachments=${attachments.length}`);
   appendCompatibilityLogs(attachments);
 
   await runtime.boot({
@@ -177,8 +176,8 @@ async function handleBoot() {
     attachments,
     config,
     display,
-    diskImage: bootImage.diskImage,
-    imageMeta: bootImage.imageMeta,
+    diskImage: selectedImage.diskImage,
+    imageMeta: selectedImage.imageMeta,
     onLog: appendLog,
     profile: selectedProfile,
     runtimeAssets
@@ -382,12 +381,6 @@ async function resolveSelectedAttachments(config) {
   });
 
   appendLog(`扩展硬盘已就绪: ${materializedPackage.name} -> ${materializedPackage.mount.preferredSlot.toUpperCase()} (${materializedPackage.mount.sizeLabel})，当前推荐命令为 ${materializedPackage.launchCommand.includes("RUNSAFE") ? "RUNSAFE" : "RUNPAL"}。`);
-  if (materializedPackage.bootDisk?.managedBoot) {
-    appendLog(`已生成仙剑专用启动盘: ${materializedPackage.bootDisk.name}，将自动替换基础 msdos622_dosidle_a.img 引导。`);
-  }
-  if (materializedPackage.paths?.bootDiskPath) {
-    appendLog(`启动盘路径: ${materializedPackage.paths.bootDiskPath}`);
-  }
   if (materializedPackage.paths?.diskImagePath) {
     appendLog(`扩展硬盘路径: ${materializedPackage.paths.diskImagePath}`);
   }
@@ -399,7 +392,6 @@ async function resolveSelectedAttachments(config) {
     {
       id: materializedPackage.id,
       label: materializedPackage.name,
-      bootDisk: materializedPackage.bootDisk,
       launchCommand: materializedPackage.launchCommand,
       compatibility: materializedPackage.compatibility,
       preferredSlot: materializedPackage.mount.preferredSlot,
@@ -565,30 +557,6 @@ function appendCompatibilityLogs(attachments) {
     const compatibilityLines = Object.entries(attachment.compatibility).map(([key, item]) => `${key}=${item.level}`);
     appendLog(`兼容性画像: ${attachment.label} -> ${compatibilityLines.join(", ")}`);
   }
-}
-
-function resolveBootImage(selectedImage, attachments) {
-  const bootDiskAttachment = attachments.find((attachment) => attachment.bootDisk?.managedBoot);
-
-  if (!bootDiskAttachment) {
-    return selectedImage;
-  }
-
-  return {
-    imageMeta: {
-      name: bootDiskAttachment.bootDisk.name,
-      size: bootDiskAttachment.bootDisk.size,
-      sizeLabel: bootDiskAttachment.bootDisk.sizeLabel,
-      driveType: bootDiskAttachment.bootDisk.driveType
-    },
-    diskImage: {
-      source: "server",
-      name: bootDiskAttachment.bootDisk.name,
-      size: bootDiskAttachment.bootDisk.size,
-      url: bootDiskAttachment.bootDisk.url,
-      driveType: bootDiskAttachment.bootDisk.driveType
-    }
-  };
 }
 
 function createDisplayManager(canvas, v86Screen) {
