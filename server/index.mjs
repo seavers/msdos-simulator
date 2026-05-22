@@ -296,6 +296,7 @@ async function materializeGamePackage(packageId, options = {}) {
   const originalSetupBuffer = await readFile(path.join(gamePackage.sourceDirectory, "SETUP.DAT"));
   const silentSetupBuffer = buildPal95SilentSetup(originalSetupBuffer);
   const bootDisk = await materializePal95BootDisk(launchSoundEnabled);
+  console.log(`[pal95] materialize sound=${launchSoundEnabled ? "on" : "off"} boot=${bootDisk.name}`);
   const virtualFiles = [
     {
       name: "RUNPAL.BAT",
@@ -364,6 +365,7 @@ async function materializeGamePackage(packageId, options = {}) {
   });
 
   const imageStat = await stat(imagePath);
+  console.log(`[pal95] boot disk ready ${imageFileName} sound=${launchSoundEnabled ? "on" : "off"}`);
 
   return {
     id: gamePackage.id,
@@ -451,7 +453,7 @@ function buildPal95ConfigSys() {
   return [
     "DEVICE=HIMEM.SYS /testmem:off",
     "DOS=HIGH,UMB",
-    "DEVICE=EMM386.EXE NOEMS",
+    "DEVICE=EMM386.EXE RAM",
     "FILES=40",
     "BUFFERS=30",
     "STACKS=9,256",
