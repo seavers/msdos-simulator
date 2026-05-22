@@ -140,6 +140,7 @@ const server = createServer(async (request, response) => {
     const targetPath = url.pathname === "/" ? path.join(webRoot, "index.html") : path.join(webRoot, url.pathname);
     await sendFile(response, targetPath, [webRoot]);
   } catch (error) {
+    logServerStep("error", error.stack || error.message);
     sendJson(response, 500, { message: error.message });
   }
 });
@@ -293,10 +294,14 @@ async function materializeGamePackage(packageId, options = {}) {
   const imagePath = path.join(generatedDiskRoot, gamePackage.imageFileName);
   const metadataPath = path.join(generatedDiskRoot, gamePackage.metadataFileName);
   const launchSoundEnabled = Boolean(options.soundEnabled);
+  logServerStep("pal95", `开始物化游戏盘，sound=${launchSoundEnabled ? "on" : "off"}`);
+  logServerStep("pal95", `固定游戏目录: ${path.resolve(gamePackage.sourceDirectory)}`);
+  logServerStep("pal95", `输出硬盘镜像: ${imagePath}`);
+  logServerStep("pal95", `输出元数据: ${metadataPath}`);
   const originalSetupBuffer = await readFile(path.join(gamePackage.sourceDirectory, "SETUP.DAT"));
   const silentSetupBuffer = buildPal95SilentSetup(originalSetupBuffer);
   const bootDisk = await materializePal95BootDisk(launchSoundEnabled);
-  console.log(`[pal95] materialize sound=${launchSoundEnabled ? "on" : "off"} boot=${bootDisk.name}`);
+  logServerStep("pal95", `已生成专用启动盘: ${bootDisk.name} -> ${path.join(generatedDiskRoot, bootDisk.name)}`);
   const virtualFiles = [
     {
       name: "RUNPAL.BAT",
@@ -356,6 +361,7 @@ async function materializeGamePackage(packageId, options = {}) {
   ];
 
   // 步骤 1：先把游戏目录固化成一块新的 FAT16 数据盘，保证前端拿到的始终是与当前目录同步的镜像。
+  logServerStep("pal95", `开始写入 FAT16 游戏盘，共注入 ${virtualFiles.length} 个附加文件。`);
   await buildFat16Image({
     sourceDirectory: gamePackage.sourceDirectory,
     outputPath: imagePath,
@@ -365,7 +371,7 @@ async function materializeGamePackage(packageId, options = {}) {
   });
 
   const imageStat = await stat(imagePath);
-  console.log(`[pal95] boot disk ready ${imageFileName} sound=${launchSoundEnabled ? "on" : "off"}`);
+  logServerStep("pal95", `游戏盘写入完成: ${imagePath} (${formatBytes(imageStat.size)})`);
 
   return {
     id: gamePackage.id,
@@ -373,6 +379,11 @@ async function materializeGamePackage(packageId, options = {}) {
     launchCommand: launchSoundEnabled ? "C:\\\rRUNPAL\r" : gamePackage.launchCommand,
     compatibility: gamePackage.compatibility,
     bootDisk,
+    paths: {
+      bootDiskPath: path.join(generatedDiskRoot, bootDisk.name),
+      diskImagePath: imagePath,
+      metadataPath
+    },
     mount: {
       name: gamePackage.imageFileName,
       url: `/generated-disks/${encodeURIComponent(gamePackage.imageFileName)}`,
@@ -422,22 +433,29 @@ async function materializePal95BootDisk(launchSoundEnabled) {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "pal95-boot-"));
   const configPath = path.join(tempRoot, "CONFIG.SYS");
   const autoexecPath = path.join(tempRoot, "AUTOEXEC.BAT");
+  logServerStep("pal95", `开始生成专用启动盘: ${imagePath}`);
+  logServerStep("pal95", `基础启动盘来源: ${defaultBootDiskImagePath}`);
 
   try {
     // 步骤 1：复制基础 DOS 软盘，保留现有系统文件与驱动，再覆盖仙剑所需的系统配置。
     await copyFile(defaultBootDiskImagePath, imagePath);
+    logServerStep("pal95", `已复制基础启动盘到: ${imagePath}`);
 
     await writeFile(configPath, buildPal95ConfigSys(), "ascii");
     await writeFile(autoexecPath, buildPal95AutoexecBat(launchSoundEnabled), "ascii");
+    logServerStep("pal95", `临时 CONFIG.SYS: ${configPath}`);
+    logServerStep("pal95", `临时 AUTOEXEC.BAT: ${autoexecPath}`);
 
     // 步骤 2：借助 mtools 直接写回 FAT12 软盘镜像，避免再手写一套启动盘编辑逻辑。
     await execFileAsync("mcopy", ["-o", "-i", imagePath, configPath, "::CONFIG.SYS"]);
     await execFileAsync("mcopy", ["-o", "-i", imagePath, autoexecPath, "::AUTOEXEC.BAT"]);
+    logServerStep("pal95", `已写回启动盘系统配置: ${imagePath}`);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
 
   const imageStat = await stat(imagePath);
+  logServerStep("pal95", `专用启动盘完成: ${imagePath} (${formatBytes(imageStat.size)})`);
 
   return {
     name: imageFileName,
@@ -476,6 +494,10 @@ function buildPal95AutoexecBat(launchSoundEnabled) {
     launchCommand,
     ""
   ].join("\r\n");
+}
+
+function logServerStep(scope, message) {
+  console.log(`[${scope}] ${message}`);
 }
 
 async function readJson(filePath, fallback) {

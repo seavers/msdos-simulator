@@ -391,6 +391,15 @@ async function resolveSelectedAttachments(config) {
   if (materializedPackage.bootDisk?.managedBoot) {
     appendLog(`已生成仙剑专用启动盘: ${materializedPackage.bootDisk.name}，将自动替换基础 dos6.22.img 引导。`);
   }
+  if (materializedPackage.paths?.bootDiskPath) {
+    appendLog(`启动盘路径: ${materializedPackage.paths.bootDiskPath}`);
+  }
+  if (materializedPackage.paths?.diskImagePath) {
+    appendLog(`扩展硬盘路径: ${materializedPackage.paths.diskImagePath}`);
+  }
+  if (materializedPackage.paths?.metadataPath) {
+    appendLog(`镜像元数据路径: ${materializedPackage.paths.metadataPath}`);
+  }
 
   return [
     {
@@ -432,6 +441,7 @@ function syncPauseButton() {
 
 function appendLog(message) {
   const timestamp = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  console.log(`[runtime ${timestamp}] ${message}`);
   elements.eventLog.textContent = `[${timestamp}] ${message}\n${elements.eventLog.textContent}`.trim();
 }
 
@@ -444,7 +454,18 @@ async function fetchJson(url, options = {}) {
   });
 
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    let errorMessage = `Request failed: ${response.status}`;
+
+    try {
+      const payload = await response.json();
+      if (payload?.message) {
+        errorMessage = `${errorMessage} - ${payload.message}`;
+      }
+    } catch {
+      // 响应体不是 JSON 时回退到默认状态码提示
+    }
+
+    throw new Error(errorMessage);
   }
 
   return response.json();
