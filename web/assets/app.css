@@ -197,6 +197,13 @@ body {
   font-size: 14px;
 }
 
+.field-inline {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
 .field input,
 .field select,
 .field textarea,
@@ -256,6 +263,17 @@ body {
   grid-template-columns: 1fr 1fr;
   gap: 8px 12px;
   margin-bottom: 12px;
+}
+
+.manage-button {
+  min-width: 88px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 188, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
 }
 
 .button-row {
@@ -336,6 +354,43 @@ body {
   margin-top: 16px;
 }
 
+.manager-list {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.manager-item {
+  padding: 14px;
+  border: 1px solid rgba(148, 188, 255, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.manager-item-title {
+  margin: 0 0 6px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.manager-item-meta {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.manager-item-actions {
+  display: flex;
+  justify-content: end;
+  gap: 8px;
+}
+
+.manager-upload {
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 188, 255, 0.12);
+}
+
 .ghost-button,
 .startup-dialog-actions button {
   padding: 10px 14px;
@@ -393,7 +448,8 @@ body {
   }
 
   .inline-options,
-  .startup-preview-grid {
+  .startup-preview-grid,
+  .field-inline {
     grid-template-columns: 1fr;
   }
 }

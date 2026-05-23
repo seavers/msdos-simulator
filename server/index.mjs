@@ -17,6 +17,7 @@ const docsRoot = path.join(projectRoot, "docs");
 const profilesFile = path.join(projectRoot, "storage", "profiles.json");
 const sessionsFile = path.join(projectRoot, "storage", "sessions.json");
 const diskImagesRoot = path.join(projectRoot, "storage", "images");
+const baseDiskIndexFile = path.join(diskImagesRoot, "index.json");
 const generatedDiskRoot = path.join(projectRoot, "storage", "generated");
 const startupFloppyRoot = path.join(projectRoot, "storage", "startupFloppyDisk");
 const startupFloppyIndexFile = path.join(startupFloppyRoot, "index.json");
@@ -54,6 +55,7 @@ const defaultProfiles = [
 await ensureJsonFile(profilesFile, defaultProfiles);
 await ensureJsonFile(sessionsFile, []);
 await ensureDirectory(diskImagesRoot);
+await ensureJsonFile(baseDiskIndexFile, []);
 await ensureDirectory(generatedDiskRoot);
 await ensureDirectory(startupFloppyRoot);
 await ensureJsonFile(startupFloppyIndexFile, []);
@@ -87,6 +89,25 @@ const server = createServer(async (request, response) => {
 
     if (url.pathname === "/api/base-disk-images" && request.method === "GET") {
       sendJson(response, 200, await listBaseDiskImages());
+      return;
+    }
+
+    if (url.pathname === "/api/base-disk-images" && request.method === "POST") {
+      const payload = await readBody(request);
+      sendJson(response, 201, await uploadBaseDiskImage(payload));
+      return;
+    }
+
+    if (url.pathname.startsWith("/api/base-disk-images/") && request.method === "PATCH") {
+      const imageName = path.basename(decodeURIComponent(url.pathname.replace("/api/base-disk-images/", "")));
+      const payload = await readBody(request);
+      sendJson(response, 200, await updateBaseDiskImageMetadata(imageName, payload));
+      return;
+    }
+
+    if (url.pathname.startsWith("/api/base-disk-images/") && request.method === "DELETE") {
+      const imageName = path.basename(decodeURIComponent(url.pathname.replace("/api/base-disk-images/", "")));
+      sendJson(response, 200, await deleteBaseDiskImage(imageName));
       return;
     }
 
@@ -236,8 +257,12 @@ async function readBody(request) {
 }
 
 async function listBaseDiskImages() {
+  const metadataIndex = await readBaseDiskIndex();
   const diskImages = await collectDiskImages(diskImagesRoot, "/disk-images/", "storage/images");
-  return sortDiskImages(diskImages).map(({ filePath, ...diskImage }) => diskImage);
+  return sortDiskImages(diskImages).map(({ filePath, ...diskImage }) => ({
+    ...diskImage,
+    note: metadataIndex.get(diskImage.name)?.note || ""
+  }));
 }
 
 async function listStartupDisks() {
@@ -264,6 +289,69 @@ async function listStartupDisks() {
   }
 
   return startupDisks.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+async function uploadBaseDiskImage(payload = {}) {
+  const imageName = path.basename(String(payload.name || "")).trim();
+
+  if (!imageName) {
+    throw new Error("请提供系统盘文件名。");
+  }
+
+  if (!supportedDiskExtensions.has(path.extname(imageName).toLowerCase())) {
+    throw new Error(`不支持的系统盘格式: ${imageName}`);
+  }
+
+  const contentBase64 = String(payload.contentBase64 || "");
+
+  if (!contentBase64) {
+    throw new Error("上传内容为空。");
+  }
+
+  const filePath = path.join(diskImagesRoot, imageName);
+
+  if (existsSync(filePath)) {
+    throw new Error(`系统盘已存在: ${imageName}`);
+  }
+
+  // 步骤 1：把上传的原始镜像直接写入 storage/images，并同步记录备注元数据。
+  await writeFile(filePath, Buffer.from(contentBase64, "base64"));
+  await saveBaseDiskNote(imageName, String(payload.note || "").trim());
+  logServerStep("system-disk", `已上传系统盘: ${filePath}`);
+
+  return {
+    image: (await listBaseDiskImages()).find((item) => item.name === imageName) || null
+  };
+}
+
+async function updateBaseDiskImageMetadata(imageName, payload = {}) {
+  const filePath = path.join(diskImagesRoot, imageName);
+
+  if (!existsSync(filePath)) {
+    throw new Error(`未找到系统盘: ${imageName}`);
+  }
+
+  await saveBaseDiskNote(imageName, String(payload.note || "").trim());
+  logServerStep("system-disk", `已更新系统盘备注: ${filePath}`);
+
+  return {
+    image: (await listBaseDiskImages()).find((item) => item.name === imageName) || null
+  };
+}
+
+async function deleteBaseDiskImage(imageName) {
+  const filePath = path.join(diskImagesRoot, imageName);
+
+  if (!existsSync(filePath)) {
+    throw new Error(`未找到系统盘: ${imageName}`);
+  }
+
+  // 步骤 2：删除系统盘文件后同步清理备注元数据，避免管理列表残留脏记录。
+  await rm(filePath, { force: true });
+  await removeBaseDiskNote(imageName);
+  logServerStep("system-disk", `已删除系统盘: ${filePath}`);
+
+  return { deleted: true, name: imageName };
 }
 
 function sortDiskImages(diskImages) {
@@ -628,7 +716,7 @@ function buildStartupAutoexecBat(options) {
     lines.push(options.optimizeMemory ? "LH DOSIDLE" : "DOSIDLE");
   }
 
-  if (options.autoSwitchToCDrive) {
+  if (options.autoRunGame) {
     lines.push("C:");
   }
 
@@ -697,7 +785,6 @@ function normalizeStartupDiskOptions(options = {}) {
     includeDosIdle: options.includeDosIdle !== false,
     includeCdDriver,
     includeMscdex: typeof options.includeMscdex === "boolean" ? options.includeMscdex : includeCdDriver,
-    autoSwitchToCDrive: options.autoSwitchToCDrive !== false,
     autoRunGame: Boolean(options.autoRunGame)
   };
 }
@@ -713,7 +800,6 @@ function buildStartupDiskConfigKey(baseImage, options) {
     includeDosIdle: options.includeDosIdle,
     includeCdDriver: options.includeCdDriver,
     includeMscdex: options.includeMscdex,
-    autoSwitchToCDrive: options.autoSwitchToCDrive,
     autoRunGame: options.autoRunGame
   };
 
@@ -739,7 +825,6 @@ function buildStartupDescription(selectedPackage, baseImage, options) {
     `DOSIDLE: ${options.includeDosIdle ? "开" : "关"}`,
     `CD 驱动: ${options.includeCdDriver ? "开" : "关"}`,
     `MSCDEX: ${options.includeMscdex ? "开" : "关"}`,
-    `自动切 C 盘: ${options.autoSwitchToCDrive ? "开" : "关"}`,
     `自动执行游戏: ${options.autoRunGame ? "开" : "关"}`
   ];
 
@@ -793,6 +878,32 @@ async function readJson(filePath, fallback) {
   } catch {
     return fallback;
   }
+}
+
+async function readBaseDiskIndex() {
+  const records = await readJson(baseDiskIndexFile, []);
+  return new Map(records.map((record) => [record.name, record]));
+}
+
+async function saveBaseDiskNote(imageName, note) {
+  const records = await readJson(baseDiskIndexFile, []);
+  const nextRecords = records.filter((record) => record.name !== imageName);
+
+  if (note) {
+    nextRecords.push({
+      name: imageName,
+      note,
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  await writeFile(baseDiskIndexFile, JSON.stringify(nextRecords, null, 2));
+}
+
+async function removeBaseDiskNote(imageName) {
+  const records = await readJson(baseDiskIndexFile, []);
+  const nextRecords = records.filter((record) => record.name !== imageName);
+  await writeFile(baseDiskIndexFile, JSON.stringify(nextRecords, null, 2));
 }
 
 async function ensureJsonFile(filePath, fallback) {

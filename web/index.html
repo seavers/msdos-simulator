@@ -32,27 +32,14 @@
         <aside class="control-panel">
           <section class="card">
             <h2>镜像载入</h2>
-            <label class="field">
-              <span>镜像来源</span>
-              <select id="image-source">
-                <option value="server">服务端固定目录</option>
-                <option value="upload">本地上传</option>
-              </select>
-            </label>
-            <label class="field" id="server-image-field">
-              <span>系统盘镜像</span>
-              <select id="server-image-select"></select>
-            </label>
-            <p id="system-disk-description" class="field-note">启动前会按当前参数自动复用或生成系统启动盘。</p>
-            <label class="field" id="upload-image-field">
-              <span>本地镜像</span>
-              <input id="image-file" type="file" accept=".img,.ima,.vfd,.flp,.bin,.iso" />
-            </label>
-            <p class="field-note">来源目录：`storage/images/`</p>
-            <div class="status-pills">
-              <span id="image-status" class="status-pill">未选择镜像</span>
-              <span id="runtime-assets-status" class="status-pill">v86 运行时检测中</span>
+            <div class="field-inline">
+              <label class="field" id="server-image-field">
+                <span>系统盘镜像（来源目录：`storage/images`）</span>
+                <select id="server-image-select"></select>
+              </label>
+              <button id="manage-system-disks-button" type="button" class="secondary manage-button">管理</button>
             </div>
+            <p id="system-disk-description" class="field-note">系统盘: 未选择</p>
             <label class="field">
               <span>启动配置</span>
               <select id="profile-select"></select>
@@ -87,19 +74,11 @@
                 <input id="startup-disk-mscdex" type="checkbox" />
                 <span>加载 MSCDEX 扩展</span>
               </label>
-              <label class="field checkbox">
-                <input id="startup-disk-switch-c" type="checkbox" checked />
-                <span>启动后自动切到 C 盘</span>
-              </label>
             </div>
-            <label class="field">
-              <span>系统盘备注</span>
-              <input id="startup-disk-note" type="text" maxlength="120" placeholder="例如：PAL95 最小环境 / 只关 MSCDEX" />
-            </label>
             <p class="field-note">同一套脚本参数会直接复用已有系统启动盘。</p>
             <div class="button-row">
               <button id="preview-startup-button" type="button" class="secondary">预览脚本</button>
-              <button id="refresh-images-button" type="button" class="secondary">刷新系统盘</button>
+              <button id="manage-system-disks-button-inline" type="button" class="secondary">管理系统盘</button>
               <button id="pause-button" type="button" class="secondary">暂停</button>
               <button id="boot-button" type="button">启动</button>
               <button id="reset-button" type="button" class="secondary">重置</button>
@@ -166,6 +145,34 @@
             <span>AUTOEXEC.BAT</span>
             <textarea id="startup-preview-autoexec" rows="10" readonly></textarea>
           </label>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="system-disk-manager-dialog" class="startup-dialog">
+      <div class="startup-dialog-panel">
+        <header class="startup-dialog-header">
+          <div>
+            <p class="eyebrow">System Disk Manager</p>
+            <h2>系统盘管理</h2>
+          </div>
+          <button id="close-system-disk-manager-dialog" type="button" class="ghost-button" aria-label="关闭">关闭</button>
+        </header>
+
+        <div id="system-disk-manager-list" class="manager-list"></div>
+
+        <div class="manager-upload">
+          <label class="field">
+            <span>上传新镜像</span>
+            <input id="system-disk-upload-file" type="file" accept=".img,.ima,.vfd,.flp,.bin,.iso" />
+          </label>
+          <label class="field">
+            <span>上传备注</span>
+            <input id="system-disk-upload-note" type="text" maxlength="120" placeholder="例如：DOS 6.22 + DOSIDLE C盘版" />
+          </label>
+          <div class="startup-dialog-actions">
+            <button id="upload-system-disk-button" type="button">上传系统盘</button>
+          </div>
         </div>
       </div>
     </dialog>

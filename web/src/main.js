@@ -4,39 +4,38 @@ import { EmulatorRuntime } from "./emulator/emulator-runtime.js";
 const elements = {
   bootButton: document.querySelector("#boot-button"),
   closeStartupPreviewDialogButton: document.querySelector("#close-startup-preview-dialog"),
+  closeSystemDiskManagerDialogButton: document.querySelector("#close-system-disk-manager-dialog"),
   cpuProfile: document.querySelector("#cpu-profile"),
   eventLog: document.querySelector("#event-log"),
-  fileInput: document.querySelector("#image-file"),
   gamePackageSelect: document.querySelector("#game-package-select"),
   heroStatus: document.querySelector("#hero-status"),
-  imageSource: document.querySelector("#image-source"),
-  imageStatus: document.querySelector("#image-status"),
+  manageSystemDisksButton: document.querySelector("#manage-system-disks-button"),
+  manageSystemDisksButtonInline: document.querySelector("#manage-system-disks-button-inline"),
   memorySize: document.querySelector("#memory-size"),
   pauseButton: document.querySelector("#pause-button"),
   previewStartupButton: document.querySelector("#preview-startup-button"),
   profileSelect: document.querySelector("#profile-select"),
-  refreshImagesButton: document.querySelector("#refresh-images-button"),
   resetButton: document.querySelector("#reset-button"),
-  runtimeAssetsStatus: document.querySelector("#runtime-assets-status"),
   runtimeMode: document.querySelector("#runtime-mode"),
   screen: document.querySelector("#dos-screen"),
-  serverImageField: document.querySelector("#server-image-field"),
   serverImageSelect: document.querySelector("#server-image-select"),
   soundEnabled: document.querySelector("#sound-enabled"),
   startupDiskAutoRun: document.querySelector("#startup-disk-auto-run"),
   startupDiskCdrom: document.querySelector("#startup-disk-cdrom"),
   startupDiskDosIdle: document.querySelector("#startup-disk-dosidle"),
   startupDiskMscdex: document.querySelector("#startup-disk-mscdex"),
-  startupDiskNote: document.querySelector("#startup-disk-note"),
   startupDiskOptimizeMemory: document.querySelector("#startup-disk-optimize-memory"),
   startupDiskSound: document.querySelector("#startup-disk-sound"),
-  startupDiskSwitchC: document.querySelector("#startup-disk-switch-c"),
   startupPreviewAutoexec: document.querySelector("#startup-preview-autoexec"),
   startupPreviewConfig: document.querySelector("#startup-preview-config"),
   startupPreviewDialog: document.querySelector("#startup-preview-dialog"),
   startupPreviewSummary: document.querySelector("#startup-preview-summary"),
   systemDiskDescription: document.querySelector("#system-disk-description"),
-  uploadImageField: document.querySelector("#upload-image-field"),
+  systemDiskManagerDialog: document.querySelector("#system-disk-manager-dialog"),
+  systemDiskManagerList: document.querySelector("#system-disk-manager-list"),
+  systemDiskUploadFile: document.querySelector("#system-disk-upload-file"),
+  systemDiskUploadNote: document.querySelector("#system-disk-upload-note"),
+  uploadSystemDiskButton: document.querySelector("#upload-system-disk-button"),
   v86Screen: document.querySelector("#v86-screen")
 };
 
@@ -52,7 +51,6 @@ let profiles = [];
 let systemDiskImages = [];
 let availableGamePackages = [];
 let runtimeAssets = null;
-let activeLocalImage = null;
 let inputBuffer = "";
 
 bootstrap().catch((error) => {
@@ -81,23 +79,18 @@ async function bootstrap() {
   populateProfiles(profiles);
   populateSystemDiskImages(systemDiskImages);
   populateGamePackages(availableGamePackages);
-  applyRuntimeAssets(runtimeAssets);
-  syncImageSource();
-  syncSelectedImageStatus();
-
   elements.runtimeMode.textContent = "适配器: v86";
+
   loadSettings();
+  syncStartupOptionStates();
+  syncSelectedImageStatus();
+  renderSystemDiskManagerList();
 
   terminal.renderStatus("MS-DOS 6.0 Simulator", "请选择系统盘并确认脚本参数后启动。");
   appendLog("系统已就绪，当前流程为：选择系统盘 -> 调整 CONFIG/AUTOEXEC 参数 -> 预览或直接启动。");
 }
 
 function bindEvents() {
-  elements.fileInput.addEventListener("change", handleFileSelected);
-  elements.imageSource.addEventListener("change", () => {
-    syncImageSource();
-    saveSettings();
-  });
   elements.pauseButton.addEventListener("click", handlePauseToggle);
   elements.profileSelect.addEventListener("change", () => {
     syncProfileSelection();
@@ -114,15 +107,14 @@ function bindEvents() {
   elements.memorySize.addEventListener("change", saveSettings);
   elements.cpuProfile.addEventListener("change", saveSettings);
   elements.soundEnabled.addEventListener("change", saveSettings);
-  elements.startupDiskNote.addEventListener("change", () => {
-    syncSelectedImageStatus();
-    saveSettings();
-  });
   elements.previewStartupButton.addEventListener("click", handlePreviewStartupScripts);
-  elements.refreshImagesButton.addEventListener("click", refreshSystemDiskImages);
   elements.bootButton.addEventListener("click", handleBoot);
   elements.resetButton.addEventListener("click", handleReset);
+  elements.manageSystemDisksButton.addEventListener("click", openSystemDiskManager);
+  elements.manageSystemDisksButtonInline.addEventListener("click", openSystemDiskManager);
   elements.closeStartupPreviewDialogButton.addEventListener("click", () => elements.startupPreviewDialog.close());
+  elements.closeSystemDiskManagerDialogButton.addEventListener("click", closeSystemDiskManager);
+  elements.uploadSystemDiskButton.addEventListener("click", handleUploadSystemDisk);
 
   for (const element of [
     elements.startupDiskOptimizeMemory,
@@ -130,8 +122,7 @@ function bindEvents() {
     elements.startupDiskSound,
     elements.startupDiskDosIdle,
     elements.startupDiskCdrom,
-    elements.startupDiskMscdex,
-    elements.startupDiskSwitchC
+    elements.startupDiskMscdex
   ]) {
     element.addEventListener("change", () => {
       syncStartupOptionStates();
@@ -170,52 +161,14 @@ function bindEvents() {
   });
 }
 
-async function handleFileSelected(event) {
-  const [file] = event.target.files;
-
-  if (!file) {
-    activeLocalImage = null;
-    syncSelectedImageStatus();
-    return;
-  }
-
-  // 步骤 1：读取本地镜像头部，快速判断它是否具备标准引导扇区签名。
-  const header = new Uint8Array(await file.slice(0, 512).arrayBuffer());
-  const hasBootSignature = header[510] === 0x55 && header[511] === 0xaa;
-
-  activeLocalImage = {
-    file,
-    name: file.name,
-    size: file.size,
-    sizeLabel: formatBytes(file.size),
-    hasBootSignature,
-    driveType: inferDriveType(file.name, file.size)
-  };
-
-  // 步骤 2：把本地镜像元信息和当前参数记入会话表，为后续兼容性定位保留上下文。
-  await fetchJson("/api/sessions", {
-    method: "POST",
-    body: JSON.stringify({
-      imageMeta: activeLocalImage,
-      config: collectConfig()
-    })
-  });
-
-  appendLog(`已载入本地镜像: ${file.name} (${activeLocalImage.sizeLabel})，Boot Signature: ${hasBootSignature ? "0x55AA" : "缺失"}`);
-  syncSelectedImageStatus();
-}
-
 async function handlePreviewStartupScripts() {
   try {
     const preview = await fetchStartupPreview();
     elements.startupPreviewSummary.textContent = `${preview.description} | 复用键: ${preview.configKey}`;
-    if (preview.note) {
-      elements.startupPreviewSummary.textContent = `${elements.startupPreviewSummary.textContent} | 备注: ${preview.note}`;
-    }
     elements.startupPreviewConfig.value = preview.configSys;
     elements.startupPreviewAutoexec.value = preview.autoexecBat;
     elements.startupPreviewDialog.showModal();
-    appendLog(`已预览系统盘脚本: ${preview.systemDiskName} -> ${preview.startupDiskName}`);
+    appendLog(`已预览系统盘脚本: ${preview.systemDiskName}`);
   } catch (error) {
     appendLog(`预览脚本失败: ${error.message}`);
   }
@@ -226,42 +179,23 @@ async function handleBoot() {
     const selectedProfile = profiles.find((profile) => profile.id === elements.profileSelect.value) || profiles[0];
     const config = collectConfig(selectedProfile);
     const selectedImage = resolveSelectedImage();
-    let bootDisk = selectedImage;
 
-    if (elements.imageSource.value === "server") {
-      // 步骤 1：启动前根据系统盘和脚本参数查找可复用成品盘；没有命中时再生成新的启动盘。
-      const resolvedStartupDisk = await fetchJson("/api/startup-disks", {
-        method: "POST",
-        body: JSON.stringify(buildStartupRequestPayload())
-      });
+    // 步骤 3：启动前根据系统盘和脚本参数查找可复用成品盘；没有命中时再生成新的启动盘。
+    const resolvedStartupDisk = await fetchJson("/api/startup-disks", {
+      method: "POST",
+      body: JSON.stringify(buildStartupRequestPayload())
+    });
 
-      appendLog(`${resolvedStartupDisk.reused ? "复用" : "生成"}系统启动盘: ${resolvedStartupDisk.disk.name}`);
-      appendLog(`系统盘路径: ${resolvedStartupDisk.paths.baseImagePath}`);
-      appendLog(`启动盘路径: ${resolvedStartupDisk.paths.bootDiskPath}`);
-      appendLog(`启动盘索引: ${resolvedStartupDisk.paths.metadataPath}`);
-      appendLog(`启动盘说明: ${resolvedStartupDisk.preview.description}`);
-      if (resolvedStartupDisk.disk.note) {
-        appendLog(`系统盘备注: ${resolvedStartupDisk.disk.note}`);
-      }
-
-      bootDisk = {
-        imageMeta: resolvedStartupDisk.disk,
-        diskImage: {
-          source: "server",
-          name: resolvedStartupDisk.disk.name,
-          size: resolvedStartupDisk.disk.size,
-          url: resolvedStartupDisk.disk.url,
-          driveType: resolvedStartupDisk.disk.driveType
-        }
-      };
-    }
+    appendLog(`${resolvedStartupDisk.reused ? "复用" : "生成"}系统启动盘: ${resolvedStartupDisk.disk.name}`);
+    appendLog(`系统盘路径: ${resolvedStartupDisk.paths.baseImagePath}`);
+    appendLog(`启动盘路径: ${resolvedStartupDisk.paths.bootDiskPath}`);
 
     const attachments = await resolveSelectedAttachments(config);
     inputBuffer = "";
     terminal.setInputBuffer("");
     elements.runtimeMode.textContent = "适配器: v86";
 
-    appendLog(`准备启动: adapter=v86, image=${bootDisk.imageMeta.name}, profile=${selectedProfile?.name || "custom"}, attachments=${attachments.length}`);
+    appendLog(`准备启动: adapter=v86, image=${resolvedStartupDisk.disk.name}, profile=${selectedProfile?.name || "custom"}, attachments=${attachments.length}`);
     appendCompatibilityLogs(attachments);
 
     await runtime.boot({
@@ -269,8 +203,17 @@ async function handleBoot() {
       attachments,
       config,
       display,
-      diskImage: bootDisk.diskImage,
-      imageMeta: bootDisk.imageMeta,
+      diskImage: {
+        source: "server",
+        name: resolvedStartupDisk.disk.name,
+        size: resolvedStartupDisk.disk.size,
+        url: resolvedStartupDisk.disk.url,
+        driveType: resolvedStartupDisk.disk.driveType
+      },
+      imageMeta: {
+        ...resolvedStartupDisk.disk,
+        baseDiskName: selectedImage.imageMeta.name
+      },
       onLog: appendLog,
       profile: selectedProfile,
       runtimeAssets
@@ -302,17 +245,120 @@ async function handlePauseToggle() {
   syncPauseButton();
 }
 
-async function refreshSystemDiskImages() {
+async function openSystemDiskManager() {
+  await refreshSystemDiskImages({ preserveSelection: true });
+  renderSystemDiskManagerList();
+  elements.systemDiskManagerDialog.showModal();
+}
+
+function closeSystemDiskManager() {
+  elements.systemDiskManagerDialog.close();
+}
+
+async function handleUploadSystemDisk() {
+  const [file] = elements.systemDiskUploadFile.files || [];
+
+  if (!file) {
+    appendLog("请先选择要上传的系统盘镜像。");
+    return;
+  }
+
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const contentBase64 = bytesToBase64(bytes);
+    const result = await fetchJson("/api/base-disk-images", {
+      method: "POST",
+      body: JSON.stringify({
+        name: file.name,
+        note: elements.systemDiskUploadNote.value.trim(),
+        contentBase64
+      })
+    });
+
+    await refreshSystemDiskImages({ preserveSelection: true });
+    renderSystemDiskManagerList();
+    if (result.image?.name) {
+      elements.serverImageSelect.value = result.image.name;
+    }
+    elements.systemDiskUploadFile.value = "";
+    elements.systemDiskUploadNote.value = "";
+    syncSelectedImageStatus();
+    saveSettings();
+    appendLog(`已上传系统盘: ${file.name}`);
+  } catch (error) {
+    appendLog(`上传系统盘失败: ${error.message}`);
+  }
+}
+
+async function handleSaveSystemDiskNote(imageName, note) {
+  try {
+    await fetchJson(`/api/base-disk-images/${encodeURIComponent(imageName)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ note })
+    });
+    await refreshSystemDiskImages({ preserveSelection: true });
+    renderSystemDiskManagerList();
+    syncSelectedImageStatus();
+    appendLog(`已更新系统盘备注: ${imageName}`);
+  } catch (error) {
+    appendLog(`保存系统盘备注失败: ${error.message}`);
+  }
+}
+
+async function handleDeleteSystemDisk(imageName) {
+  try {
+    await fetchJson(`/api/base-disk-images/${encodeURIComponent(imageName)}`, {
+      method: "DELETE"
+    });
+    await refreshSystemDiskImages({ preserveSelection: false });
+    renderSystemDiskManagerList();
+    syncSelectedImageStatus();
+    saveSettings();
+    appendLog(`已删除系统盘: ${imageName}`);
+  } catch (error) {
+    appendLog(`删除系统盘失败: ${error.message}`);
+  }
+}
+
+async function refreshSystemDiskImages({ preserveSelection } = { preserveSelection: true }) {
   const previousSelection = elements.serverImageSelect.value;
   systemDiskImages = await fetchJson("/api/base-disk-images");
   populateSystemDiskImages(systemDiskImages);
 
-  if (previousSelection && systemDiskImages.some((image) => image.name === previousSelection)) {
+  if (preserveSelection && previousSelection && systemDiskImages.some((image) => image.name === previousSelection)) {
     elements.serverImageSelect.value = previousSelection;
   }
 
   syncSelectedImageStatus();
-  appendLog(`系统盘目录已刷新，当前共 ${systemDiskImages.length} 个。`);
+}
+
+function renderSystemDiskManagerList() {
+  if (systemDiskImages.length === 0) {
+    elements.systemDiskManagerList.innerHTML = "<p class=\"field-note\">当前没有系统盘镜像。</p>";
+    return;
+  }
+
+  elements.systemDiskManagerList.innerHTML = systemDiskImages.map((image) => `
+    <section class="manager-item" data-image-name="${escapeHtml(image.name)}">
+      <p class="manager-item-title">${escapeHtml(image.name)}</p>
+      <p class="manager-item-meta">${escapeHtml(image.sizeLabel)} · ${escapeHtml(image.driveType)}</p>
+      <label class="field">
+        <span>备注</span>
+        <input data-role="note-input" type="text" maxlength="120" value="${escapeHtml(image.note || "")}" placeholder="给这个系统盘加一个备注" />
+      </label>
+      <div class="manager-item-actions">
+        <button data-role="save-note" type="button" class="secondary manage-button">保存备注</button>
+        <button data-role="delete-image" type="button" class="secondary manage-button">删除</button>
+      </div>
+    </section>
+  `).join("");
+
+  for (const section of elements.systemDiskManagerList.querySelectorAll(".manager-item")) {
+    const imageName = section.dataset.imageName;
+    const noteInput = section.querySelector('[data-role="note-input"]');
+    section.querySelector('[data-role="save-note"]').addEventListener("click", () => handleSaveSystemDiskNote(imageName, noteInput.value.trim()));
+    section.querySelector('[data-role="delete-image"]').addEventListener("click", () => handleDeleteSystemDisk(imageName));
+  }
 }
 
 function syncProfileSelection() {
@@ -340,7 +386,6 @@ function applyPal95StartupDefaults() {
   elements.startupDiskDosIdle.checked = false;
   elements.startupDiskCdrom.checked = false;
   elements.startupDiskMscdex.checked = false;
-  elements.startupDiskSwitchC.checked = true;
   syncStartupOptionStates();
 }
 
@@ -364,15 +409,6 @@ function syncStartupOptionStates() {
   }
 }
 
-function syncImageSource() {
-  const useServerImage = elements.imageSource.value === "server";
-  elements.serverImageField.classList.toggle("hidden", !useServerImage);
-  elements.systemDiskDescription.classList.toggle("hidden", !useServerImage);
-  elements.previewStartupButton.disabled = !useServerImage;
-  elements.uploadImageField.classList.toggle("hidden", useServerImage);
-  syncSelectedImageStatus();
-}
-
 function collectConfig(profile = null) {
   return {
     memoryMb: Number(elements.memorySize.value || profile?.memoryMb || 16),
@@ -390,17 +426,11 @@ function buildStartupRequestPayload() {
     includeDosIdle: elements.startupDiskDosIdle.checked,
     includeCdDriver: elements.startupDiskCdrom.checked,
     includeMscdex: elements.startupDiskMscdex.checked,
-    note: elements.startupDiskNote.value.trim(),
-    autoSwitchToCDrive: elements.startupDiskSwitchC.checked,
     autoRunGame: elements.startupDiskAutoRun.checked
   };
 }
 
 async function fetchStartupPreview() {
-  if (elements.imageSource.value !== "server") {
-    throw new Error("预览脚本仅支持服务端系统盘。");
-  }
-
   if (!elements.serverImageSelect.value) {
     throw new Error("请先选择系统盘镜像。");
   }
@@ -424,11 +454,11 @@ function populateProfiles(items) {
 
 function populateSystemDiskImages(items) {
   if (items.length === 0) {
-    elements.serverImageSelect.innerHTML = '<option value="">系统盘目录暂无镜像</option>';
+    elements.serverImageSelect.innerHTML = "<option value=\"\">系统盘目录暂无镜像</option>";
     return;
   }
 
-  elements.serverImageSelect.innerHTML = items.map((image) => `<option value="${image.name}">${image.name} · ${image.sizeLabel} · ${image.driveType}</option>`).join("");
+  elements.serverImageSelect.innerHTML = items.map((image) => `<option value="${escapeHtml(image.name)}">${escapeHtml(image.name)} · ${escapeHtml(image.sizeLabel)} · ${escapeHtml(image.driveType)}</option>`).join("");
   const preferredImage = items.find((image) => image.name.toLowerCase() === DEFAULT_SYSTEM_DISK_NAME);
   elements.serverImageSelect.value = preferredImage?.name || items[0].name;
 }
@@ -443,16 +473,6 @@ function populateGamePackages(items) {
     elements.gamePackageSelect.value = preferredGamePackage.id;
     applyPal95StartupDefaults();
   }
-}
-
-function applyRuntimeAssets(assets) {
-  if (assets?.v86?.ready) {
-    elements.runtimeAssetsStatus.textContent = "v86 运行时已就绪";
-    return;
-  }
-
-  const missing = assets?.v86?.missing?.join(", ") || "未知资源";
-  elements.runtimeAssetsStatus.textContent = `v86 缺失: ${missing}`;
 }
 
 function updateLifecycle(status, context) {
@@ -486,37 +506,20 @@ function updateLifecycle(status, context) {
 }
 
 function resolveSelectedImage() {
-  if (elements.imageSource.value === "server") {
-    const selectedImage = systemDiskImages.find((image) => image.name === elements.serverImageSelect.value);
+  const selectedImage = systemDiskImages.find((image) => image.name === elements.serverImageSelect.value);
 
-    if (!selectedImage) {
-      throw new Error("服务端系统盘目录中未找到可启动镜像，请先把基础 DOS 盘放入 storage/images/。");
-    }
-
-    return {
-      imageMeta: selectedImage,
-      diskImage: {
-        source: "server",
-        name: selectedImage.name,
-        size: selectedImage.size,
-        url: selectedImage.url,
-        driveType: selectedImage.driveType
-      }
-    };
-  }
-
-  if (!activeLocalImage) {
-    throw new Error("请先选择本地镜像文件。");
+  if (!selectedImage) {
+    throw new Error("服务端系统盘目录中未找到可启动镜像，请先在管理里上传系统盘。");
   }
 
   return {
-    imageMeta: activeLocalImage,
+    imageMeta: selectedImage,
     diskImage: {
-      source: "upload",
-      name: activeLocalImage.name,
-      size: activeLocalImage.size,
-      file: activeLocalImage.file,
-      driveType: activeLocalImage.driveType
+      source: "server",
+      name: selectedImage.name,
+      size: selectedImage.size,
+      url: selectedImage.url,
+      driveType: selectedImage.driveType
     }
   };
 }
@@ -534,7 +537,7 @@ async function resolveSelectedAttachments(config) {
     throw new Error("所选扩展硬盘不可用，请先确认 pal95 游戏目录存在。");
   }
 
-  // 步骤 3：启动前先在服务端把游戏目录固化为 FAT16 数据盘，避免前端直接处理大量原始文件。
+  // 步骤 4：启动前先在服务端把游戏目录固化为 FAT16 数据盘，避免前端直接处理大量原始文件。
   appendLog(`正在准备扩展硬盘: ${selectedPackage.name}`);
   const materializedPackage = await fetchJson(`/api/game-packages/${encodeURIComponent(selectedPackage.id)}/materialize`, {
     method: "POST",
@@ -544,13 +547,6 @@ async function resolveSelectedAttachments(config) {
   });
 
   appendLog(`扩展硬盘已就绪: ${materializedPackage.name} -> ${materializedPackage.mount.preferredSlot.toUpperCase()} (${materializedPackage.mount.sizeLabel})，当前推荐命令为 ${materializedPackage.launchCommand.includes("RUNSAFE") ? "RUNSAFE" : "RUNPAL"}。`);
-  if (materializedPackage.paths?.diskImagePath) {
-    appendLog(`扩展硬盘路径: ${materializedPackage.paths.diskImagePath}`);
-  }
-  if (materializedPackage.paths?.metadataPath) {
-    appendLog(`镜像元数据路径: ${materializedPackage.paths.metadataPath}`);
-  }
-
   return [
     {
       id: materializedPackage.id,
@@ -572,31 +568,22 @@ async function resolveSelectedAttachments(config) {
 function syncSelectedImageStatus() {
   try {
     const selectedImage = resolveSelectedImage();
-    elements.imageStatus.textContent = `${selectedImage.imageMeta.name} · ${selectedImage.imageMeta.sizeLabel || formatBytes(selectedImage.imageMeta.size)} · ${selectedImage.imageMeta.driveType}`;
     syncSystemDiskDescription(selectedImage.imageMeta);
   } catch (error) {
-    elements.imageStatus.textContent = error.message.replace("Error: ", "");
-    syncSystemDiskDescription(null);
+    elements.systemDiskDescription.textContent = error.message.replace("Error: ", "");
   }
 }
 
 function syncSystemDiskDescription(systemDisk) {
-  if (elements.imageSource.value !== "server") {
-    elements.systemDiskDescription.textContent = "当前使用本地上传镜像，系统盘脚本参数仅对服务端系统盘生效。";
-    return;
-  }
-
   if (!systemDisk) {
-    elements.systemDiskDescription.textContent = "请选择服务端系统盘镜像。";
+    elements.systemDiskDescription.textContent = "系统盘: 未选择";
     return;
   }
 
-  const selectedPackage = availableGamePackages.find((item) => item.id === elements.gamePackageSelect.value);
-  const packageLabel = selectedPackage?.name || "无扩展硬盘";
-  const segments = [`系统盘: ${systemDisk.name}`, `游戏包: ${packageLabel}`];
+  const segments = [`系统盘: ${systemDisk.name}`];
 
-  if (elements.startupDiskNote.value.trim()) {
-    segments.push(`备注: ${elements.startupDiskNote.value.trim()}`);
+  if (systemDisk.note) {
+    segments.push(`备注: ${systemDisk.note}`);
   }
 
   elements.systemDiskDescription.textContent = segments.join(" | ");
@@ -636,7 +623,7 @@ async function fetchJson(url, options = {}) {
         errorMessage = `${errorMessage} - ${payload.message}`;
       }
     } catch {
-      // 响应体不是 JSON 时回退到默认状态码提示
+      // 响应体不是 JSON 时回退到默认提示
     }
 
     throw new Error(errorMessage);
@@ -653,23 +640,8 @@ function formatBytes(size) {
   return `${(size / 1024 / 1024).toFixed(2)} MB`;
 }
 
-function inferDriveType(fileName, size) {
-  const extension = fileName.toLowerCase().split(".").pop();
-
-  if (extension === "iso") {
-    return "cdrom";
-  }
-
-  if (size <= 2_949_120) {
-    return "floppy";
-  }
-
-  return "hardDisk";
-}
-
 function saveSettings() {
   const settings = {
-    imageSource: elements.imageSource.value,
     systemDisk: elements.serverImageSelect.value,
     profile: elements.profileSelect.value,
     gamePackage: elements.gamePackageSelect.value,
@@ -681,9 +653,7 @@ function saveSettings() {
     startupDiskSound: elements.startupDiskSound.checked,
     startupDiskDosIdle: elements.startupDiskDosIdle.checked,
     startupDiskCdrom: elements.startupDiskCdrom.checked,
-    startupDiskMscdex: elements.startupDiskMscdex.checked,
-    startupDiskSwitchC: elements.startupDiskSwitchC.checked,
-    startupDiskNote: elements.startupDiskNote.value
+    startupDiskMscdex: elements.startupDiskMscdex.checked
   };
 
   try {
@@ -704,10 +674,6 @@ function loadSettings() {
 
   if (!settings) {
     return;
-  }
-
-  if (settings.imageSource) {
-    elements.imageSource.value = settings.imageSource;
   }
 
   if (settings.profile && Array.from(elements.profileSelect.options).some((opt) => opt.value === settings.profile)) {
@@ -740,8 +706,7 @@ function loadSettings() {
     startupDiskSound: elements.startupDiskSound,
     startupDiskDosIdle: elements.startupDiskDosIdle,
     startupDiskCdrom: elements.startupDiskCdrom,
-    startupDiskMscdex: elements.startupDiskMscdex,
-    startupDiskSwitchC: elements.startupDiskSwitchC
+    startupDiskMscdex: elements.startupDiskMscdex
   })) {
     if (typeof settings[key] === "boolean") {
       element.checked = settings[key];
@@ -751,14 +716,6 @@ function loadSettings() {
   if (elements.profileSelect.value === "pal95") {
     elements.soundEnabled.checked = false;
   }
-
-  if (typeof settings.startupDiskNote === "string") {
-    elements.startupDiskNote.value = settings.startupDiskNote;
-  }
-
-  syncStartupOptionStates();
-  syncImageSource();
-  syncSelectedImageStatus();
 }
 
 function appendCompatibilityLogs(attachments) {
@@ -770,6 +727,24 @@ function appendCompatibilityLogs(attachments) {
     const compatibilityLines = Object.entries(attachment.compatibility).map(([key, item]) => `${key}=${item.level}`);
     appendLog(`兼容性画像: ${attachment.label} -> ${compatibilityLines.join(", ")}`);
   }
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+
+  for (const value of bytes) {
+    binary += String.fromCharCode(value);
+  }
+
+  return btoa(binary);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;");
 }
 
 function createDisplayManager(canvas, v86Screen) {
