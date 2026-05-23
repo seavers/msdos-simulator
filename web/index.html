@@ -44,11 +44,15 @@
               <span>启动配置</span>
               <select id="profile-select"></select>
             </label>
-            <label class="field">
-              <span>扩展硬盘</span>
-              <select id="game-package-select"></select>
-            </label>
-            <p class="field-note">可选：直接挂载 `storage/extendDisk/` 根目录下的原始扩展盘镜像文件；当前不再扫描 `pal95/` 子目录，也不再生成中间 `generated` 数据盘。</p>
+            <div class="field-inline">
+              <label class="field">
+                <span>扩展硬盘（来源目录 'storage/extendDisk'）</span>
+                <select id="game-package-select"></select>
+              </label>
+              <button id="manage-extend-disks-button" type="button" class="secondary manage-button">管理</button>
+            </div>
+            <p class="field-note">要求放入原始扩展盘镜像；优先使用可直接作为 HDD 挂载的 `.img`。若当前不是 HDD，启动时会自动转换为 HDD，并缓存到 `storage/extendHDD/`。</p>
+            <p id="extend-disk-description" class="field-note">扩展硬盘: 未选择</p>
             <div id="system-disk-options" class="inline-options">
               <label class="field checkbox">
                 <input id="startup-disk-dosidle" type="checkbox" />
@@ -185,6 +189,50 @@
               </label>
               <div class="startup-dialog-actions">
                 <button id="upload-system-disk-button" type="button">上传系统盘</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="extend-disk-manager-dialog" class="startup-dialog">
+      <div class="startup-dialog-panel">
+        <header class="startup-dialog-header">
+          <div>
+            <p class="eyebrow">Extend Disk Manager</p>
+            <h2>扩展硬盘管理</h2>
+          </div>
+          <button id="close-extend-disk-manager-dialog" type="button" class="ghost-button" aria-label="关闭">关闭</button>
+        </header>
+
+        <div class="manager-layout">
+          <label class="field manager-list-field">
+            <span>镜像列表</span>
+            <select id="extend-disk-manager-select" size="8"></select>
+          </label>
+
+          <div class="manager-detail">
+            <label class="field">
+              <span>备注</span>
+              <input id="extend-disk-manager-note" type="text" maxlength="120" placeholder="给这个扩展硬盘加一个备注" />
+            </label>
+            <div class="manager-item-actions">
+              <button id="save-extend-disk-note-button" type="button" class="secondary manage-button">保存备注</button>
+              <button id="delete-extend-disk-button" type="button" class="secondary manage-button">删除镜像</button>
+            </div>
+
+            <div class="manager-upload">
+              <label class="field">
+                <span>上传新镜像</span>
+                <input id="extend-disk-upload-file" type="file" accept=".img,.ima,.vfd,.flp,.bin,.iso" />
+              </label>
+              <label class="field">
+                <span>上传备注</span>
+                <input id="extend-disk-upload-note" type="text" maxlength="120" placeholder="例如：PAL95 原始软盘镜像" />
+              </label>
+              <div class="startup-dialog-actions">
+                <button id="upload-extend-disk-button" type="button">上传扩展硬盘</button>
               </div>
             </div>
           </div>

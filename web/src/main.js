@@ -3,12 +3,21 @@ import { EmulatorRuntime } from "./emulator/emulator-runtime.js";
 
 const elements = {
   bootButton: document.querySelector("#boot-button"),
+  closeExtendDiskManagerDialogButton: document.querySelector("#close-extend-disk-manager-dialog"),
   closeStartupPreviewDialogButton: document.querySelector("#close-startup-preview-dialog"),
   closeSystemDiskManagerDialogButton: document.querySelector("#close-system-disk-manager-dialog"),
   cpuProfile: document.querySelector("#cpu-profile"),
+  deleteExtendDiskButton: document.querySelector("#delete-extend-disk-button"),
   eventLog: document.querySelector("#event-log"),
+  extendDiskDescription: document.querySelector("#extend-disk-description"),
+  extendDiskManagerDialog: document.querySelector("#extend-disk-manager-dialog"),
+  extendDiskManagerNote: document.querySelector("#extend-disk-manager-note"),
+  extendDiskManagerSelect: document.querySelector("#extend-disk-manager-select"),
+  extendDiskUploadFile: document.querySelector("#extend-disk-upload-file"),
+  extendDiskUploadNote: document.querySelector("#extend-disk-upload-note"),
   gamePackageSelect: document.querySelector("#game-package-select"),
   heroStatus: document.querySelector("#hero-status"),
+  manageExtendDisksButton: document.querySelector("#manage-extend-disks-button"),
   manageSystemDisksButton: document.querySelector("#manage-system-disks-button"),
   memorySize: document.querySelector("#memory-size"),
   pauseButton: document.querySelector("#pause-button"),
@@ -16,6 +25,7 @@ const elements = {
   profileSelect: document.querySelector("#profile-select"),
   resetButton: document.querySelector("#reset-button"),
   runtimeMode: document.querySelector("#runtime-mode"),
+  saveExtendDiskNoteButton: document.querySelector("#save-extend-disk-note-button"),
   screen: document.querySelector("#dos-screen"),
   serverImageSelect: document.querySelector("#server-image-select"),
   soundEnabled: document.querySelector("#sound-enabled"),
@@ -35,6 +45,7 @@ const elements = {
   systemDiskManagerSelect: document.querySelector("#system-disk-manager-select"),
   systemDiskUploadFile: document.querySelector("#system-disk-upload-file"),
   systemDiskUploadNote: document.querySelector("#system-disk-upload-note"),
+  uploadExtendDiskButton: document.querySelector("#upload-extend-disk-button"),
   saveSystemDiskNoteButton: document.querySelector("#save-system-disk-note-button"),
   deleteSystemDiskButton: document.querySelector("#delete-system-disk-button"),
   uploadSystemDiskButton: document.querySelector("#upload-system-disk-button"),
@@ -51,6 +62,7 @@ const DEFAULT_SYSTEM_DISK_NAME = "msdos622_dosidle_a.img";
 
 let profiles = [];
 let systemDiskImages = [];
+let extendDiskImages = [];
 let availableGamePackages = [];
 let runtimeAssets = null;
 let inputBuffer = "";
@@ -66,15 +78,17 @@ async function bootstrap() {
   syncPauseButton();
 
   // 步骤 2：并行加载配置、系统盘、扩展硬盘与 v86 运行时状态。
-  const [profileItems, baseImages, gamePackages, assets] = await Promise.all([
+  const [profileItems, baseImages, extendImages, gamePackages, assets] = await Promise.all([
     fetchJson("/api/profiles"),
     fetchJson("/api/base-disk-images"),
+    fetchJson("/api/extend-disk-images"),
     fetchJson("/api/game-packages"),
     fetchJson("/api/runtime-assets")
   ]);
 
   profiles = profileItems;
   systemDiskImages = baseImages;
+  extendDiskImages = extendImages;
   availableGamePackages = gamePackages;
   runtimeAssets = assets;
 
@@ -87,6 +101,7 @@ async function bootstrap() {
   syncStartupOptionStates();
   syncSelectedImageStatus();
   renderSystemDiskManagerList();
+  renderExtendDiskManagerList();
 
   terminal.renderStatus("MS-DOS 6.0 Simulator", "请选择系统盘并确认脚本参数后启动。");
   appendLog("系统已就绪，当前流程为：选择系统盘 -> 调整 CONFIG/AUTOEXEC 参数 -> 预览或直接启动。");
@@ -104,6 +119,7 @@ function bindEvents() {
   });
   elements.gamePackageSelect.addEventListener("change", () => {
     syncStartupOptionDefaults();
+    syncSelectedImageStatus();
     saveSettings();
   });
   elements.memorySize.addEventListener("change", saveSettings);
@@ -112,10 +128,16 @@ function bindEvents() {
   elements.previewStartupButton.addEventListener("click", handlePreviewStartupScripts);
   elements.bootButton.addEventListener("click", handleBoot);
   elements.resetButton.addEventListener("click", handleReset);
+  elements.manageExtendDisksButton.addEventListener("click", openExtendDiskManager);
   elements.manageSystemDisksButton.addEventListener("click", openSystemDiskManager);
+  elements.closeExtendDiskManagerDialogButton.addEventListener("click", closeExtendDiskManager);
   elements.closeStartupPreviewDialogButton.addEventListener("click", () => elements.startupPreviewDialog.close());
   elements.closeSystemDiskManagerDialogButton.addEventListener("click", closeSystemDiskManager);
+  elements.uploadExtendDiskButton.addEventListener("click", handleUploadExtendDisk);
   elements.uploadSystemDiskButton.addEventListener("click", handleUploadSystemDisk);
+  elements.extendDiskManagerSelect.addEventListener("change", syncExtendDiskManagerSelection);
+  elements.saveExtendDiskNoteButton.addEventListener("click", handleSaveSelectedExtendDiskNote);
+  elements.deleteExtendDiskButton.addEventListener("click", handleDeleteSelectedExtendDisk);
   elements.systemDiskManagerSelect.addEventListener("change", syncSystemDiskManagerSelection);
   elements.saveSystemDiskNoteButton.addEventListener("click", handleSaveSelectedSystemDiskNote);
   elements.deleteSystemDiskButton.addEventListener("click", handleDeleteSelectedSystemDisk);
@@ -255,6 +277,17 @@ function closeSystemDiskManager() {
   elements.systemDiskManagerDialog.close();
 }
 
+async function openExtendDiskManager() {
+  await refreshExtendDiskImages({ preserveSelection: true });
+  renderExtendDiskManagerList();
+  syncExtendDiskManagerSelection();
+  elements.extendDiskManagerDialog.showModal();
+}
+
+function closeExtendDiskManager() {
+  elements.extendDiskManagerDialog.close();
+}
+
 async function handleUploadSystemDisk() {
   const [file] = elements.systemDiskUploadFile.files || [];
 
@@ -288,6 +321,42 @@ async function handleUploadSystemDisk() {
     appendLog(`已上传系统盘: ${file.name}`);
   } catch (error) {
     appendLog(`上传系统盘失败: ${error.message}`);
+  }
+}
+
+async function handleUploadExtendDisk() {
+  const [file] = elements.extendDiskUploadFile.files || [];
+
+  if (!file) {
+    appendLog("请先选择要上传的扩展硬盘镜像。");
+    return;
+  }
+
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const contentBase64 = bytesToBase64(bytes);
+    const result = await fetchJson("/api/extend-disk-images", {
+      method: "POST",
+      body: JSON.stringify({
+        name: file.name,
+        note: elements.extendDiskUploadNote.value.trim(),
+        contentBase64
+      })
+    });
+
+    await refreshExtendDiskImages({ preserveSelection: true });
+    renderExtendDiskManagerList();
+    syncExtendDiskManagerSelection(result.image?.name);
+    if (result.image?.name) {
+      elements.gamePackageSelect.value = result.image.name;
+    }
+    elements.extendDiskUploadFile.value = "";
+    elements.extendDiskUploadNote.value = "";
+    syncSelectedImageStatus();
+    saveSettings();
+    appendLog(`已上传扩展硬盘: ${file.name}`);
+  } catch (error) {
+    appendLog(`上传扩展硬盘失败: ${error.message}`);
   }
 }
 
@@ -337,6 +406,52 @@ async function handleDeleteSelectedSystemDisk() {
   }
 }
 
+async function handleSaveSelectedExtendDiskNote() {
+  const imageName = elements.extendDiskManagerSelect.value;
+
+  if (!imageName) {
+    appendLog("请先在扩展硬盘列表中选择一个镜像。");
+    return;
+  }
+
+  try {
+    await fetchJson(`/api/extend-disk-images/${encodeURIComponent(imageName)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ note: elements.extendDiskManagerNote.value.trim() })
+    });
+    await refreshExtendDiskImages({ preserveSelection: true });
+    renderExtendDiskManagerList();
+    syncExtendDiskManagerSelection(imageName);
+    syncSelectedImageStatus();
+    appendLog(`已更新扩展硬盘备注: ${imageName}`);
+  } catch (error) {
+    appendLog(`保存扩展硬盘备注失败: ${error.message}`);
+  }
+}
+
+async function handleDeleteSelectedExtendDisk() {
+  const imageName = elements.extendDiskManagerSelect.value;
+
+  if (!imageName) {
+    appendLog("请先在扩展硬盘列表中选择一个镜像。");
+    return;
+  }
+
+  try {
+    await fetchJson(`/api/extend-disk-images/${encodeURIComponent(imageName)}`, {
+      method: "DELETE"
+    });
+    await refreshExtendDiskImages({ preserveSelection: false });
+    renderExtendDiskManagerList();
+    syncExtendDiskManagerSelection();
+    syncSelectedImageStatus();
+    saveSettings();
+    appendLog(`已删除扩展硬盘: ${imageName}`);
+  } catch (error) {
+    appendLog(`删除扩展硬盘失败: ${error.message}`);
+  }
+}
+
 async function refreshSystemDiskImages({ preserveSelection } = { preserveSelection: true }) {
   const previousSelection = elements.serverImageSelect.value;
   systemDiskImages = await fetchJson("/api/base-disk-images");
@@ -346,6 +461,21 @@ async function refreshSystemDiskImages({ preserveSelection } = { preserveSelecti
     elements.serverImageSelect.value = previousSelection;
   }
 
+  syncSelectedImageStatus();
+}
+
+async function refreshExtendDiskImages({ preserveSelection } = { preserveSelection: true }) {
+  const previousSelection = elements.gamePackageSelect.value;
+  const [extendImages, gamePackages] = await Promise.all([fetchJson("/api/extend-disk-images"), fetchJson("/api/game-packages")]);
+  extendDiskImages = extendImages;
+  availableGamePackages = gamePackages;
+  populateGamePackages(availableGamePackages);
+
+  if (preserveSelection && previousSelection && availableGamePackages.some((item) => item.id === previousSelection)) {
+    elements.gamePackageSelect.value = previousSelection;
+  }
+
+  syncStartupOptionStates();
   syncSelectedImageStatus();
 }
 
@@ -360,6 +490,21 @@ function renderSystemDiskManagerList() {
   }
 
   elements.systemDiskManagerSelect.innerHTML = systemDiskImages.map((image) => `<option value="${escapeHtml(image.name)}">${escapeHtml(image.name)} · ${escapeHtml(image.sizeLabel)}</option>`).join("");
+}
+
+function renderExtendDiskManagerList() {
+  if (extendDiskImages.length === 0) {
+    elements.extendDiskManagerSelect.innerHTML = "<option value=\"\">当前没有扩展硬盘镜像</option>";
+    elements.extendDiskManagerNote.value = "";
+    elements.extendDiskManagerNote.disabled = true;
+    elements.saveExtendDiskNoteButton.disabled = true;
+    elements.deleteExtendDiskButton.disabled = true;
+    return;
+  }
+
+  elements.extendDiskManagerSelect.innerHTML = extendDiskImages
+    .map((image) => `<option value="${escapeHtml(image.name)}">${escapeHtml(image.name)} · ${escapeHtml(image.sizeLabel)} · ${escapeHtml(image.driveType)}</option>`)
+    .join("");
 }
 
 function syncSystemDiskManagerSelection(preferredImageName = "") {
@@ -385,6 +530,31 @@ function syncSystemDiskManagerSelection(preferredImageName = "") {
   elements.systemDiskManagerNote.disabled = false;
   elements.saveSystemDiskNoteButton.disabled = false;
   elements.deleteSystemDiskButton.disabled = false;
+}
+
+function syncExtendDiskManagerSelection(preferredImageName = "") {
+  if (preferredImageName && extendDiskImages.some((image) => image.name === preferredImageName)) {
+    elements.extendDiskManagerSelect.value = preferredImageName;
+  }
+
+  const selectedImage = extendDiskImages.find((image) => image.name === elements.extendDiskManagerSelect.value) || extendDiskImages[0];
+
+  if (!selectedImage) {
+    elements.extendDiskManagerNote.value = "";
+    elements.extendDiskManagerNote.disabled = true;
+    elements.saveExtendDiskNoteButton.disabled = true;
+    elements.deleteExtendDiskButton.disabled = true;
+    return;
+  }
+
+  if (!elements.extendDiskManagerSelect.value) {
+    elements.extendDiskManagerSelect.value = selectedImage.name;
+  }
+
+  elements.extendDiskManagerNote.value = selectedImage.note || "";
+  elements.extendDiskManagerNote.disabled = false;
+  elements.saveExtendDiskNoteButton.disabled = false;
+  elements.deleteExtendDiskButton.disabled = false;
 }
 
 function syncProfileSelection() {
@@ -567,21 +737,32 @@ async function resolveSelectedAttachments() {
     return [];
   }
 
-  // 步骤 4：扩展盘直接挂载 storage/extendDisk 下的原始镜像，不再生成中间 FAT16 数据盘。
-  appendLog(`扩展硬盘已就绪: ${selectedPackage.mount.name} -> ${selectedPackage.preferredSlot.toUpperCase()} (${selectedPackage.mount.sizeLabel})`);
+  // 步骤 4：若原始扩展盘不是 HDD，则先让服务端自动转换并缓存，再把结果挂载给 v86。
+  const resolvedPackage = await fetchJson(`/api/game-packages/${encodeURIComponent(selectedPackage.id)}/resolve-mount`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+
+  if (resolvedPackage.converted) {
+    appendLog(`${resolvedPackage.cached ? "复用" : "生成"}扩展 HDD: ${resolvedPackage.package.mount.name}`);
+    appendLog(`扩展盘源路径: ${resolvedPackage.paths.sourceImagePath}`);
+    appendLog(`扩展盘 HDD 路径: ${resolvedPackage.paths.hddImagePath}`);
+  }
+
+  appendLog(`扩展硬盘已就绪: ${resolvedPackage.package.mount.name} -> ${resolvedPackage.package.preferredSlot.toUpperCase()} (${resolvedPackage.package.mount.sizeLabel})`);
   return [
     {
-      id: selectedPackage.id,
-      label: selectedPackage.name,
-      launchCommand: selectedPackage.familyId === "pal95" ? (elements.startupDiskSound.checked ? "RUNPAL" : "RUNSAFE") : "",
-      compatibility: selectedPackage.compatibility,
-      preferredSlot: selectedPackage.preferredSlot,
+      id: resolvedPackage.package.id,
+      label: resolvedPackage.package.name,
+      launchCommand: resolvedPackage.package.familyId === "pal95" ? (elements.startupDiskSound.checked ? "RUNPAL" : "RUNSAFE") : "",
+      compatibility: resolvedPackage.package.compatibility,
+      preferredSlot: resolvedPackage.package.preferredSlot,
       diskImage: {
         source: "server",
-        name: selectedPackage.mount.name,
-        size: selectedPackage.mount.size,
-        url: selectedPackage.mount.url,
-        driveType: selectedPackage.mount.driveType
+        name: resolvedPackage.package.mount.name,
+        size: resolvedPackage.package.mount.size,
+        url: resolvedPackage.package.mount.url,
+        driveType: resolvedPackage.package.mount.driveType
       }
     }
   ];
@@ -594,6 +775,8 @@ function syncSelectedImageStatus() {
   } catch (error) {
     elements.systemDiskDescription.textContent = error.message.replace("Error: ", "");
   }
+
+  syncExtendDiskDescription();
 }
 
 function syncSystemDiskDescription(systemDisk) {
@@ -609,6 +792,29 @@ function syncSystemDiskDescription(systemDisk) {
   }
 
   elements.systemDiskDescription.textContent = segments.join(" | ");
+}
+
+function syncExtendDiskDescription() {
+  const selectedPackage = getSelectedGamePackage();
+
+  if (!selectedPackage) {
+    elements.extendDiskDescription.textContent = "扩展硬盘: 未选择";
+    return;
+  }
+
+  const segments = [`扩展硬盘: ${selectedPackage.mount.name}`, `格式: ${selectedPackage.sourceDriveType}`];
+
+  if (selectedPackage.conversionRequired) {
+    segments.push("启动时会自动转换为 HDD");
+  } else {
+    segments.push("当前已是 HDD，将直接挂载");
+  }
+
+  if (selectedPackage.note) {
+    segments.push(`备注: ${selectedPackage.note}`);
+  }
+
+  elements.extendDiskDescription.textContent = segments.join(" | ");
 }
 
 function syncPauseButton() {

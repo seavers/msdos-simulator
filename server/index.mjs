@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { buildFat16Image } from "./fat16-image-builder.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,6 +19,9 @@ const sessionsFile = path.join(projectRoot, "storage", "sessions.json");
 const diskImagesRoot = path.join(projectRoot, "storage", "images");
 const baseDiskIndexFile = path.join(diskImagesRoot, "index.json");
 const extendDiskRoot = path.join(projectRoot, "storage", "extendDisk");
+const extendDiskIndexFile = path.join(extendDiskRoot, "index.json");
+const extendHddRoot = path.join(projectRoot, "storage", "extendHDD");
+const extendHddIndexFile = path.join(extendHddRoot, "index.json");
 const startupDiskRoot = path.join(projectRoot, "storage", "startupDisk");
 const startupDiskIndexFile = path.join(startupDiskRoot, "index.json");
 const v86BiosRoot = path.join(projectRoot, "storage", "runtime", "v86", "bios");
@@ -51,6 +55,9 @@ await ensureJsonFile(sessionsFile, []);
 await ensureDirectory(diskImagesRoot);
 await ensureJsonFile(baseDiskIndexFile, []);
 await ensureDirectory(extendDiskRoot);
+await ensureJsonFile(extendDiskIndexFile, []);
+await ensureDirectory(extendHddRoot);
+await ensureJsonFile(extendHddIndexFile, []);
 await ensureDirectory(startupDiskRoot);
 await ensureJsonFile(startupDiskIndexFile, []);
 await ensureDirectory(v86BiosRoot);
@@ -86,9 +93,20 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (url.pathname === "/api/extend-disk-images" && request.method === "GET") {
+      sendJson(response, 200, await listExtendDiskImages());
+      return;
+    }
+
     if (url.pathname === "/api/base-disk-images" && request.method === "POST") {
       const payload = await readBody(request);
       sendJson(response, 201, await uploadBaseDiskImage(payload));
+      return;
+    }
+
+    if (url.pathname === "/api/extend-disk-images" && request.method === "POST") {
+      const payload = await readBody(request);
+      sendJson(response, 201, await uploadExtendDiskImage(payload));
       return;
     }
 
@@ -99,9 +117,22 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (url.pathname.startsWith("/api/extend-disk-images/") && request.method === "PATCH") {
+      const imageName = path.basename(decodeURIComponent(url.pathname.replace("/api/extend-disk-images/", "")));
+      const payload = await readBody(request);
+      sendJson(response, 200, await updateExtendDiskImageMetadata(imageName, payload));
+      return;
+    }
+
     if (url.pathname.startsWith("/api/base-disk-images/") && request.method === "DELETE") {
       const imageName = path.basename(decodeURIComponent(url.pathname.replace("/api/base-disk-images/", "")));
       sendJson(response, 200, await deleteBaseDiskImage(imageName));
+      return;
+    }
+
+    if (url.pathname.startsWith("/api/extend-disk-images/") && request.method === "DELETE") {
+      const imageName = path.basename(decodeURIComponent(url.pathname.replace("/api/extend-disk-images/", "")));
+      sendJson(response, 200, await deleteExtendDiskImage(imageName));
       return;
     }
 
@@ -124,6 +155,12 @@ const server = createServer(async (request, response) => {
 
     if (url.pathname === "/api/game-packages" && request.method === "GET") {
       sendJson(response, 200, await listGamePackages());
+      return;
+    }
+
+    if (url.pathname.startsWith("/api/game-packages/") && url.pathname.endsWith("/resolve-mount") && request.method === "POST") {
+      const packageId = path.basename(url.pathname.replace("/resolve-mount", ""));
+      sendJson(response, 200, await resolveGamePackageMount(packageId));
       return;
     }
 
@@ -164,6 +201,12 @@ const server = createServer(async (request, response) => {
     if (url.pathname.startsWith("/extend-disks-files/")) {
       const fileName = path.basename(decodeURIComponent(url.pathname.replace("/extend-disks-files/", "")));
       await sendFile(response, path.join(extendDiskRoot, fileName), [extendDiskRoot]);
+      return;
+    }
+
+    if (url.pathname.startsWith("/extend-hdd-files/")) {
+      const fileName = path.basename(decodeURIComponent(url.pathname.replace("/extend-hdd-files/", "")));
+      await sendFile(response, path.join(extendHddRoot, fileName), [extendHddRoot]);
       return;
     }
 
@@ -252,6 +295,15 @@ async function listBaseDiskImages() {
   }));
 }
 
+async function listExtendDiskImages() {
+  const metadataIndex = await readExtendDiskIndex();
+  const diskImages = await collectDiskImages(extendDiskRoot, "/extend-disks-files/", "storage/extendDisk");
+  return sortDiskImages(diskImages).map((diskImage) => ({
+    ...diskImage,
+    note: metadataIndex.get(diskImage.name)?.note || ""
+  }));
+}
+
 async function listStartupDisks() {
   const records = await readJson(startupDiskIndexFile, []);
   const startupDisks = [];
@@ -311,6 +363,39 @@ async function uploadBaseDiskImage(payload = {}) {
   };
 }
 
+async function uploadExtendDiskImage(payload = {}) {
+  const imageName = path.basename(String(payload.name || "")).trim();
+
+  if (!imageName) {
+    throw new Error("请提供扩展硬盘文件名。");
+  }
+
+  if (!supportedDiskExtensions.has(path.extname(imageName).toLowerCase())) {
+    throw new Error(`不支持的扩展硬盘格式: ${imageName}`);
+  }
+
+  const contentBase64 = String(payload.contentBase64 || "");
+
+  if (!contentBase64) {
+    throw new Error("上传内容为空。");
+  }
+
+  const filePath = path.join(extendDiskRoot, imageName);
+
+  if (existsSync(filePath)) {
+    throw new Error(`扩展硬盘已存在: ${imageName}`);
+  }
+
+  // 步骤 1：把上传的扩展盘镜像写入固定目录，并单独记录备注元数据。
+  await writeFile(filePath, Buffer.from(contentBase64, "base64"));
+  await saveExtendDiskNote(imageName, String(payload.note || "").trim());
+  logServerStep("extend-disk", `已上传扩展硬盘: ${filePath}`);
+
+  return {
+    image: (await listExtendDiskImages()).find((item) => item.name === imageName) || null
+  };
+}
+
 async function updateBaseDiskImageMetadata(imageName, payload = {}) {
   const filePath = path.join(diskImagesRoot, imageName);
 
@@ -326,6 +411,21 @@ async function updateBaseDiskImageMetadata(imageName, payload = {}) {
   };
 }
 
+async function updateExtendDiskImageMetadata(imageName, payload = {}) {
+  const filePath = path.join(extendDiskRoot, imageName);
+
+  if (!existsSync(filePath)) {
+    throw new Error(`未找到扩展硬盘: ${imageName}`);
+  }
+
+  await saveExtendDiskNote(imageName, String(payload.note || "").trim());
+  logServerStep("extend-disk", `已更新扩展硬盘备注: ${filePath}`);
+
+  return {
+    image: (await listExtendDiskImages()).find((item) => item.name === imageName) || null
+  };
+}
+
 async function deleteBaseDiskImage(imageName) {
   const filePath = path.join(diskImagesRoot, imageName);
 
@@ -337,6 +437,22 @@ async function deleteBaseDiskImage(imageName) {
   await rm(filePath, { force: true });
   await removeBaseDiskNote(imageName);
   logServerStep("system-disk", `已删除系统盘: ${filePath}`);
+
+  return { deleted: true, name: imageName };
+}
+
+async function deleteExtendDiskImage(imageName) {
+  const filePath = path.join(extendDiskRoot, imageName);
+
+  if (!existsSync(filePath)) {
+    throw new Error(`未找到扩展硬盘: ${imageName}`);
+  }
+
+  // 步骤 2：删除扩展盘时同步清理备注和已缓存的 HDD 转换结果，避免缓存悬挂。
+  await rm(filePath, { force: true });
+  await removeExtendDiskNote(imageName);
+  await removeConvertedExtendHddRecords(imageName);
+  logServerStep("extend-disk", `已删除扩展硬盘: ${filePath}`);
 
   return { deleted: true, name: imageName };
 }
@@ -357,8 +473,37 @@ function sortDiskImages(diskImages) {
 }
 
 async function listGamePackages() {
-  const diskImages = await collectDiskImages(extendDiskRoot, "/extend-disks-files/", "storage/extendDisk");
+  const diskImages = await listExtendDiskImages();
   return diskImages.map((diskImage) => buildGamePackageFromDiskImage(diskImage));
+}
+
+async function resolveGamePackageMount(packageId) {
+  const gamePackage = await resolveGamePackageById(packageId);
+
+  if (!gamePackage) {
+    throw new Error(`未找到扩展硬盘: ${packageId}`);
+  }
+
+  if (gamePackage.sourceDriveType === "hardDisk") {
+    return {
+      converted: false,
+      cached: false,
+      package: {
+        ...gamePackage,
+        mount: {
+          ...gamePackage.mount,
+          driveType: "hardDisk"
+        }
+      },
+      paths: {
+        sourceImagePath: gamePackage.sourcePath,
+        hddImagePath: gamePackage.sourcePath,
+        metadataPath: extendHddIndexFile
+      }
+    };
+  }
+
+  return convertExtendDiskToHdd(gamePackage);
 }
 
 async function previewStartupDisk(options = {}) {
@@ -666,6 +811,111 @@ async function resolveGamePackageById(packageId) {
   return gamePackages.find((item) => item.id === packageId) || null;
 }
 
+async function convertExtendDiskToHdd(gamePackage) {
+  const sourceStat = await stat(gamePackage.sourcePath);
+  const sourceKey = createHash("sha256")
+    .update(JSON.stringify({ name: gamePackage.mount.name, size: sourceStat.size, updatedAt: sourceStat.mtime.toISOString() }))
+    .digest("hex")
+    .slice(0, 16);
+  const records = await readJson(extendHddIndexFile, []);
+  const reusableRecord = records.find((record) => record.sourceKey === sourceKey && existsSync(path.join(extendHddRoot, record.imageFileName)));
+
+  // 步骤 1：同一份源镜像只转换一次；源文件未变化时直接复用缓存 HDD。
+  if (reusableRecord) {
+    const imagePath = path.join(extendHddRoot, reusableRecord.imageFileName);
+    const fileStat = await stat(imagePath);
+    logServerStep("extend-hdd", `复用已转换 HDD: ${imagePath}`);
+
+    reusableRecord.lastUsedAt = new Date().toISOString();
+    await writeFile(extendHddIndexFile, JSON.stringify(records, null, 2));
+
+    return {
+      converted: true,
+      cached: true,
+      package: {
+        ...gamePackage,
+        preferredSlot: "hda",
+        mount: {
+          name: reusableRecord.imageFileName,
+          size: fileStat.size,
+          sizeLabel: formatBytes(fileStat.size),
+          updatedAt: fileStat.mtime.toISOString(),
+          url: `/extend-hdd-files/${encodeURIComponent(reusableRecord.imageFileName)}`,
+          driveType: "hardDisk"
+        }
+      },
+      paths: {
+        sourceImagePath: gamePackage.sourcePath,
+        hddImagePath: imagePath,
+        metadataPath: extendHddIndexFile
+      }
+    };
+  }
+
+  const imageFileName = buildExtendHddFileName(gamePackage.mount.name);
+  const imagePath = path.join(extendHddRoot, imageFileName);
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "extend-hdd-"));
+  const extractRoot = path.join(tempRoot, "source");
+  await mkdir(extractRoot, { recursive: true });
+  logServerStep("extend-hdd", `开始转换扩展盘为 HDD: ${gamePackage.sourcePath}`);
+  logServerStep("extend-hdd", `输出 HDD 缓存目录: ${extendHddRoot}`);
+  logServerStep("extend-hdd", `输出 HDD 镜像: ${imagePath}`);
+
+  try {
+    // 步骤 2：先把原始镜像解到临时目录，再统一重建成 FAT16 HDD，避免直接修改源镜像。
+    await execFileAsync("mcopy", ["-s", "-n", "-i", gamePackage.sourcePath, "::*", extractRoot]);
+
+    try {
+      await buildFat16Image({
+        sourceDirectory: extractRoot,
+        outputPath: imagePath,
+        volumeLabel: buildVolumeLabelFromFileName(gamePackage.mount.name)
+      });
+    } catch (error) {
+      throw new Error(`自动转换为 HDD 失败：当前只支持根目录平铺的 DOS 镜像。请在线下整理原始镜像结构。原始错误：${error.message}`);
+    }
+  } catch (error) {
+    throw new Error(`自动转换为 HDD 失败：请提供可被 mtools 读取的 DOS 镜像，或直接放入 HDD 镜像。原始错误：${error.message}`);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+
+  const fileStat = await stat(imagePath);
+  records.unshift({
+    id: `extend-hdd-${Date.now()}`,
+    sourceImageName: gamePackage.mount.name,
+    sourceKey,
+    sourceDriveType: gamePackage.sourceDriveType,
+    imageFileName,
+    createdAt: new Date().toISOString(),
+    lastUsedAt: new Date().toISOString()
+  });
+  await writeFile(extendHddIndexFile, JSON.stringify(records, null, 2));
+  logServerStep("extend-hdd", `扩展盘转换完成: ${imagePath} (${formatBytes(fileStat.size)})`);
+
+  return {
+    converted: true,
+    cached: false,
+    package: {
+      ...gamePackage,
+      preferredSlot: "hda",
+      mount: {
+        name: imageFileName,
+        size: fileStat.size,
+        sizeLabel: formatBytes(fileStat.size),
+        updatedAt: fileStat.mtime.toISOString(),
+        url: `/extend-hdd-files/${encodeURIComponent(imageFileName)}`,
+        driveType: "hardDisk"
+      }
+    },
+    paths: {
+      sourceImagePath: gamePackage.sourcePath,
+      hddImagePath: imagePath,
+      metadataPath: extendHddIndexFile
+    }
+  };
+}
+
 function normalizeStartupDiskOptions(options = {}) {
   const includeCdDriver = options.includeCdDriver !== false;
 
@@ -708,10 +958,20 @@ function buildStartupDiskFileName(sourceName) {
   return `${safeName}-${Date.now()}.img`;
 }
 
+function buildExtendHddFileName(sourceName) {
+  const safeName = slugifyFileName(path.parse(sourceName).name) || "extend-hdd";
+  return `${safeName}-${Date.now()}.img`;
+}
+
 function buildDefaultStartupDiskName(selectedPackage, options) {
   const packageName = selectedPackage?.name || "通用 DOS";
   const soundLabel = options.soundEnabled ? "声音版" : "静音版";
   return `${packageName} 启动盘 (${soundLabel})`;
+}
+
+function buildVolumeLabelFromFileName(fileName) {
+  const normalized = path.parse(fileName).name.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 11);
+  return normalized || "EXTENDHDD";
 }
 
 function buildStartupDescription(selectedPackage, baseImage, options) {
@@ -766,15 +1026,18 @@ function buildGamePackageFromDiskImage(diskImage) {
     available: true,
     preferredSlot,
     sourcePath: diskImage.filePath,
+    sourceDriveType: diskImage.driveType,
+    conversionRequired: diskImage.driveType !== "hardDisk",
     launchCommand: family?.launchCommand || "",
     compatibility: family?.compatibility || null,
+    note: diskImage.note || "",
     mount: {
       name: diskImage.name,
       url: diskImage.url,
       size: diskImage.size,
       sizeLabel: diskImage.sizeLabel,
       updatedAt: diskImage.updatedAt,
-      driveType: preferredSlot === "cdrom" ? "cdrom" : "hardDisk"
+      driveType: diskImage.driveType
     }
   };
 }
@@ -816,6 +1079,11 @@ async function readBaseDiskIndex() {
   return new Map(records.map((record) => [record.name, record]));
 }
 
+async function readExtendDiskIndex() {
+  const records = await readJson(extendDiskIndexFile, []);
+  return new Map(records.map((record) => [record.name, record]));
+}
+
 async function saveBaseDiskNote(imageName, note) {
   const records = await readJson(baseDiskIndexFile, []);
   const nextRecords = records.filter((record) => record.name !== imageName);
@@ -835,6 +1103,39 @@ async function removeBaseDiskNote(imageName) {
   const records = await readJson(baseDiskIndexFile, []);
   const nextRecords = records.filter((record) => record.name !== imageName);
   await writeFile(baseDiskIndexFile, JSON.stringify(nextRecords, null, 2));
+}
+
+async function saveExtendDiskNote(imageName, note) {
+  const records = await readJson(extendDiskIndexFile, []);
+  const nextRecords = records.filter((record) => record.name !== imageName);
+
+  if (note) {
+    nextRecords.push({
+      name: imageName,
+      note,
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  await writeFile(extendDiskIndexFile, JSON.stringify(nextRecords, null, 2));
+}
+
+async function removeExtendDiskNote(imageName) {
+  const records = await readJson(extendDiskIndexFile, []);
+  const nextRecords = records.filter((record) => record.name !== imageName);
+  await writeFile(extendDiskIndexFile, JSON.stringify(nextRecords, null, 2));
+}
+
+async function removeConvertedExtendHddRecords(sourceImageName) {
+  const records = await readJson(extendHddIndexFile, []);
+  const removedRecords = records.filter((record) => record.sourceImageName === sourceImageName);
+  const nextRecords = records.filter((record) => record.sourceImageName !== sourceImageName);
+
+  for (const record of removedRecords) {
+    await rm(path.join(extendHddRoot, record.imageFileName), { force: true });
+  }
+
+  await writeFile(extendHddIndexFile, JSON.stringify(nextRecords, null, 2));
 }
 
 async function ensureJsonFile(filePath, fallback) {
