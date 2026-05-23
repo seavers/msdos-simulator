@@ -10,7 +10,6 @@ const elements = {
   gamePackageSelect: document.querySelector("#game-package-select"),
   heroStatus: document.querySelector("#hero-status"),
   manageSystemDisksButton: document.querySelector("#manage-system-disks-button"),
-  manageSystemDisksButtonInline: document.querySelector("#manage-system-disks-button-inline"),
   memorySize: document.querySelector("#memory-size"),
   pauseButton: document.querySelector("#pause-button"),
   previewStartupButton: document.querySelector("#preview-startup-button"),
@@ -32,9 +31,12 @@ const elements = {
   startupPreviewSummary: document.querySelector("#startup-preview-summary"),
   systemDiskDescription: document.querySelector("#system-disk-description"),
   systemDiskManagerDialog: document.querySelector("#system-disk-manager-dialog"),
-  systemDiskManagerList: document.querySelector("#system-disk-manager-list"),
+  systemDiskManagerNote: document.querySelector("#system-disk-manager-note"),
+  systemDiskManagerSelect: document.querySelector("#system-disk-manager-select"),
   systemDiskUploadFile: document.querySelector("#system-disk-upload-file"),
   systemDiskUploadNote: document.querySelector("#system-disk-upload-note"),
+  saveSystemDiskNoteButton: document.querySelector("#save-system-disk-note-button"),
+  deleteSystemDiskButton: document.querySelector("#delete-system-disk-button"),
   uploadSystemDiskButton: document.querySelector("#upload-system-disk-button"),
   v86Screen: document.querySelector("#v86-screen")
 };
@@ -111,10 +113,12 @@ function bindEvents() {
   elements.bootButton.addEventListener("click", handleBoot);
   elements.resetButton.addEventListener("click", handleReset);
   elements.manageSystemDisksButton.addEventListener("click", openSystemDiskManager);
-  elements.manageSystemDisksButtonInline.addEventListener("click", openSystemDiskManager);
   elements.closeStartupPreviewDialogButton.addEventListener("click", () => elements.startupPreviewDialog.close());
   elements.closeSystemDiskManagerDialogButton.addEventListener("click", closeSystemDiskManager);
   elements.uploadSystemDiskButton.addEventListener("click", handleUploadSystemDisk);
+  elements.systemDiskManagerSelect.addEventListener("change", syncSystemDiskManagerSelection);
+  elements.saveSystemDiskNoteButton.addEventListener("click", handleSaveSelectedSystemDiskNote);
+  elements.deleteSystemDiskButton.addEventListener("click", handleDeleteSelectedSystemDisk);
 
   for (const element of [
     elements.startupDiskOptimizeMemory,
@@ -178,8 +182,6 @@ async function handleBoot() {
   try {
     const selectedProfile = profiles.find((profile) => profile.id === elements.profileSelect.value) || profiles[0];
     const config = collectConfig(selectedProfile);
-    const selectedImage = resolveSelectedImage();
-
     // 步骤 3：启动前根据系统盘和脚本参数查找可复用成品盘；没有命中时再生成新的启动盘。
     const resolvedStartupDisk = await fetchJson("/api/startup-disks", {
       method: "POST",
@@ -210,10 +212,7 @@ async function handleBoot() {
         url: resolvedStartupDisk.disk.url,
         driveType: resolvedStartupDisk.disk.driveType
       },
-      imageMeta: {
-        ...resolvedStartupDisk.disk,
-        baseDiskName: selectedImage.imageMeta.name
-      },
+      imageMeta: resolvedStartupDisk.disk,
       onLog: appendLog,
       profile: selectedProfile,
       runtimeAssets
@@ -248,6 +247,7 @@ async function handlePauseToggle() {
 async function openSystemDiskManager() {
   await refreshSystemDiskImages({ preserveSelection: true });
   renderSystemDiskManagerList();
+  syncSystemDiskManagerSelection();
   elements.systemDiskManagerDialog.showModal();
 }
 
@@ -277,6 +277,7 @@ async function handleUploadSystemDisk() {
 
     await refreshSystemDiskImages({ preserveSelection: true });
     renderSystemDiskManagerList();
+    syncSystemDiskManagerSelection(result.image?.name);
     if (result.image?.name) {
       elements.serverImageSelect.value = result.image.name;
     }
@@ -290,14 +291,22 @@ async function handleUploadSystemDisk() {
   }
 }
 
-async function handleSaveSystemDiskNote(imageName, note) {
+async function handleSaveSelectedSystemDiskNote() {
+  const imageName = elements.systemDiskManagerSelect.value;
+
+  if (!imageName) {
+    appendLog("请先在系统盘列表中选择一个镜像。");
+    return;
+  }
+
   try {
     await fetchJson(`/api/base-disk-images/${encodeURIComponent(imageName)}`, {
       method: "PATCH",
-      body: JSON.stringify({ note })
+      body: JSON.stringify({ note: elements.systemDiskManagerNote.value.trim() })
     });
     await refreshSystemDiskImages({ preserveSelection: true });
     renderSystemDiskManagerList();
+    syncSystemDiskManagerSelection(imageName);
     syncSelectedImageStatus();
     appendLog(`已更新系统盘备注: ${imageName}`);
   } catch (error) {
@@ -305,13 +314,21 @@ async function handleSaveSystemDiskNote(imageName, note) {
   }
 }
 
-async function handleDeleteSystemDisk(imageName) {
+async function handleDeleteSelectedSystemDisk() {
+  const imageName = elements.systemDiskManagerSelect.value;
+
+  if (!imageName) {
+    appendLog("请先在系统盘列表中选择一个镜像。");
+    return;
+  }
+
   try {
     await fetchJson(`/api/base-disk-images/${encodeURIComponent(imageName)}`, {
       method: "DELETE"
     });
     await refreshSystemDiskImages({ preserveSelection: false });
     renderSystemDiskManagerList();
+    syncSystemDiskManagerSelection();
     syncSelectedImageStatus();
     saveSettings();
     appendLog(`已删除系统盘: ${imageName}`);
@@ -334,31 +351,40 @@ async function refreshSystemDiskImages({ preserveSelection } = { preserveSelecti
 
 function renderSystemDiskManagerList() {
   if (systemDiskImages.length === 0) {
-    elements.systemDiskManagerList.innerHTML = "<p class=\"field-note\">当前没有系统盘镜像。</p>";
+    elements.systemDiskManagerSelect.innerHTML = "<option value=\"\">当前没有系统盘镜像</option>";
+    elements.systemDiskManagerNote.value = "";
+    elements.systemDiskManagerNote.disabled = true;
+    elements.saveSystemDiskNoteButton.disabled = true;
+    elements.deleteSystemDiskButton.disabled = true;
     return;
   }
 
-  elements.systemDiskManagerList.innerHTML = systemDiskImages.map((image) => `
-    <section class="manager-item" data-image-name="${escapeHtml(image.name)}">
-      <p class="manager-item-title">${escapeHtml(image.name)}</p>
-      <p class="manager-item-meta">${escapeHtml(image.sizeLabel)} · ${escapeHtml(image.driveType)}</p>
-      <label class="field">
-        <span>备注</span>
-        <input data-role="note-input" type="text" maxlength="120" value="${escapeHtml(image.note || "")}" placeholder="给这个系统盘加一个备注" />
-      </label>
-      <div class="manager-item-actions">
-        <button data-role="save-note" type="button" class="secondary manage-button">保存备注</button>
-        <button data-role="delete-image" type="button" class="secondary manage-button">删除</button>
-      </div>
-    </section>
-  `).join("");
+  elements.systemDiskManagerSelect.innerHTML = systemDiskImages.map((image) => `<option value="${escapeHtml(image.name)}">${escapeHtml(image.name)} · ${escapeHtml(image.sizeLabel)}</option>`).join("");
+}
 
-  for (const section of elements.systemDiskManagerList.querySelectorAll(".manager-item")) {
-    const imageName = section.dataset.imageName;
-    const noteInput = section.querySelector('[data-role="note-input"]');
-    section.querySelector('[data-role="save-note"]').addEventListener("click", () => handleSaveSystemDiskNote(imageName, noteInput.value.trim()));
-    section.querySelector('[data-role="delete-image"]').addEventListener("click", () => handleDeleteSystemDisk(imageName));
+function syncSystemDiskManagerSelection(preferredImageName = "") {
+  if (preferredImageName && systemDiskImages.some((image) => image.name === preferredImageName)) {
+    elements.systemDiskManagerSelect.value = preferredImageName;
   }
+
+  const selectedImage = systemDiskImages.find((image) => image.name === elements.systemDiskManagerSelect.value) || systemDiskImages[0];
+
+  if (!selectedImage) {
+    elements.systemDiskManagerNote.value = "";
+    elements.systemDiskManagerNote.disabled = true;
+    elements.saveSystemDiskNoteButton.disabled = true;
+    elements.deleteSystemDiskButton.disabled = true;
+    return;
+  }
+
+  if (!elements.systemDiskManagerSelect.value) {
+    elements.systemDiskManagerSelect.value = selectedImage.name;
+  }
+
+  elements.systemDiskManagerNote.value = selectedImage.note || "";
+  elements.systemDiskManagerNote.disabled = false;
+  elements.saveSystemDiskNoteButton.disabled = false;
+  elements.deleteSystemDiskButton.disabled = false;
 }
 
 function syncProfileSelection() {

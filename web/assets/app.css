@@ -204,6 +204,10 @@ body {
   align-items: end;
 }
 
+.field-inline > .field {
+  margin-bottom: 0;
+}
+
 .field input,
 .field select,
 .field textarea,
@@ -278,7 +282,7 @@ body {
 
 .button-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
   gap: 8px;
   margin-top: 6px;
 }
@@ -311,7 +315,7 @@ body {
 }
 
 .startup-dialog {
-  width: min(760px, calc(100vw - 32px));
+  width: min(620px, calc(100vw - 32px));
   border: 1px solid var(--panel-border);
   border-radius: 24px;
   padding: 0;
@@ -354,36 +358,30 @@ body {
   margin-top: 16px;
 }
 
-.manager-list {
+.manager-layout {
   display: grid;
-  gap: 12px;
-  margin-bottom: 16px;
+  grid-template-columns: 220px 1fr;
+  gap: 16px;
 }
 
-.manager-item {
-  padding: 14px;
-  border: 1px solid rgba(148, 188, 255, 0.12);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.03);
+.manager-list-field {
+  margin-bottom: 0;
 }
 
-.manager-item-title {
-  margin: 0 0 6px;
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 600;
+.manager-list-field select {
+  min-height: 220px;
 }
 
-.manager-item-meta {
-  margin: 0 0 10px;
-  color: var(--muted);
-  font-size: 12px;
+.manager-detail {
+  display: flex;
+  flex-direction: column;
 }
 
 .manager-item-actions {
   display: flex;
-  justify-content: end;
+  justify-content: flex-end;
   gap: 8px;
+  margin-bottom: 12px;
 }
 
 .manager-upload {
@@ -449,7 +447,8 @@ body {
 
   .inline-options,
   .startup-preview-grid,
-  .field-inline {
+  .field-inline,
+  .manager-layout {
     grid-template-columns: 1fr;
   }
 }

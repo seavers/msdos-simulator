@@ -51,20 +51,12 @@
             <p class="field-note">可选：把固定目录游戏文件打成 FAT16 数据盘并作为 `hda` 挂载。第一阶段默认支持 `pal95/` 目录。</p>
             <div id="system-disk-options" class="inline-options">
               <label class="field checkbox">
-                <input id="startup-disk-optimize-memory" type="checkbox" checked />
-                <span>优化常规内存（HIGH/UMB/LH）</span>
-              </label>
-              <label class="field checkbox">
-                <input id="startup-disk-auto-run" type="checkbox" checked />
-                <span>自动执行游戏启动命令</span>
-              </label>
-              <label class="field checkbox">
-                <input id="startup-disk-sound" type="checkbox" />
-                <span>使用声音版启动（PAL95 对应 RUNPAL）</span>
-              </label>
-              <label class="field checkbox">
                 <input id="startup-disk-dosidle" type="checkbox" />
                 <span>保留 DOSIDLE</span>
+              </label>
+              <label class="field checkbox">
+                <input id="startup-disk-optimize-memory" type="checkbox" checked />
+                <span>优化常规内存（HIGH/UMB/LH）</span>
               </label>
               <label class="field checkbox">
                 <input id="startup-disk-cdrom" type="checkbox" />
@@ -74,11 +66,18 @@
                 <input id="startup-disk-mscdex" type="checkbox" />
                 <span>加载 MSCDEX 扩展</span>
               </label>
+              <label class="field checkbox">
+                <input id="startup-disk-sound" type="checkbox" />
+                <span>使用声音版启动（PAL95 对应 RUNPAL）</span>
+              </label>
+              <label class="field checkbox">
+                <input id="startup-disk-auto-run" type="checkbox" checked />
+                <span>自动执行游戏启动命令</span>
+              </label>
             </div>
             <p class="field-note">同一套脚本参数会直接复用已有系统启动盘。</p>
             <div class="button-row">
               <button id="preview-startup-button" type="button" class="secondary">预览脚本</button>
-              <button id="manage-system-disks-button-inline" type="button" class="secondary">管理系统盘</button>
               <button id="pause-button" type="button" class="secondary">暂停</button>
               <button id="boot-button" type="button">启动</button>
               <button id="reset-button" type="button" class="secondary">重置</button>
@@ -159,19 +158,35 @@
           <button id="close-system-disk-manager-dialog" type="button" class="ghost-button" aria-label="关闭">关闭</button>
         </header>
 
-        <div id="system-disk-manager-list" class="manager-list"></div>
+        <div class="manager-layout">
+          <label class="field manager-list-field">
+            <span>镜像列表</span>
+            <select id="system-disk-manager-select" size="8"></select>
+          </label>
 
-        <div class="manager-upload">
-          <label class="field">
-            <span>上传新镜像</span>
-            <input id="system-disk-upload-file" type="file" accept=".img,.ima,.vfd,.flp,.bin,.iso" />
-          </label>
-          <label class="field">
-            <span>上传备注</span>
-            <input id="system-disk-upload-note" type="text" maxlength="120" placeholder="例如：DOS 6.22 + DOSIDLE C盘版" />
-          </label>
-          <div class="startup-dialog-actions">
-            <button id="upload-system-disk-button" type="button">上传系统盘</button>
+          <div class="manager-detail">
+            <label class="field">
+              <span>备注</span>
+              <input id="system-disk-manager-note" type="text" maxlength="120" placeholder="给这个系统盘加一个备注" />
+            </label>
+            <div class="manager-item-actions">
+              <button id="save-system-disk-note-button" type="button" class="secondary manage-button">保存备注</button>
+              <button id="delete-system-disk-button" type="button" class="secondary manage-button">删除镜像</button>
+            </div>
+
+            <div class="manager-upload">
+              <label class="field">
+                <span>上传新镜像</span>
+                <input id="system-disk-upload-file" type="file" accept=".img,.ima,.vfd,.flp,.bin,.iso" />
+              </label>
+              <label class="field">
+                <span>上传备注</span>
+                <input id="system-disk-upload-note" type="text" maxlength="120" placeholder="例如：DOS 6.22 + DOSIDLE C盘版" />
+              </label>
+              <div class="startup-dialog-actions">
+                <button id="upload-system-disk-button" type="button">上传系统盘</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
