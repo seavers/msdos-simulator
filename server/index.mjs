@@ -19,8 +19,8 @@ const sessionsFile = path.join(projectRoot, "storage", "sessions.json");
 const diskImagesRoot = path.join(projectRoot, "storage", "images");
 const baseDiskIndexFile = path.join(diskImagesRoot, "index.json");
 const generatedDiskRoot = path.join(projectRoot, "storage", "generated");
-const startupFloppyRoot = path.join(projectRoot, "storage", "startupFloppyDisk");
-const startupFloppyIndexFile = path.join(startupFloppyRoot, "index.json");
+const startupDiskRoot = path.join(projectRoot, "storage", "startupDisk");
+const startupDiskIndexFile = path.join(startupDiskRoot, "index.json");
 const v86BiosRoot = path.join(projectRoot, "storage", "runtime", "v86", "bios");
 const v86PackageRoot = await resolvePackageRoot("v86/package.json");
 const v86BuildRoot = v86PackageRoot ? path.join(v86PackageRoot, "build") : null;
@@ -57,8 +57,8 @@ await ensureJsonFile(sessionsFile, []);
 await ensureDirectory(diskImagesRoot);
 await ensureJsonFile(baseDiskIndexFile, []);
 await ensureDirectory(generatedDiskRoot);
-await ensureDirectory(startupFloppyRoot);
-await ensureJsonFile(startupFloppyIndexFile, []);
+await ensureDirectory(startupDiskRoot);
+await ensureJsonFile(startupDiskIndexFile, []);
 await ensureDirectory(v86BiosRoot);
 
 const server = createServer(async (request, response) => {
@@ -174,9 +174,9 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (url.pathname.startsWith("/startup-floppy-disks/")) {
-      const fileName = path.basename(decodeURIComponent(url.pathname.replace("/startup-floppy-disks/", "")));
-      await sendFile(response, path.join(startupFloppyRoot, fileName), [startupFloppyRoot]);
+    if (url.pathname.startsWith("/startup-disks-files/")) {
+      const fileName = path.basename(decodeURIComponent(url.pathname.replace("/startup-disks-files/", "")));
+      await sendFile(response, path.join(startupDiskRoot, fileName), [startupDiskRoot]);
       return;
     }
 
@@ -266,12 +266,12 @@ async function listBaseDiskImages() {
 }
 
 async function listStartupDisks() {
-  const records = await readJson(startupFloppyIndexFile, []);
+  const records = await readJson(startupDiskIndexFile, []);
   const startupDisks = [];
 
   // 步骤 1：按索引逐个校验磁盘文件仍然存在，并把动态大小、时间等信息补齐返回给前端。
   for (const record of records) {
-    const imagePath = path.join(startupFloppyRoot, record.imageFileName);
+    const imagePath = path.join(startupDiskRoot, record.imageFileName);
 
     if (!existsSync(imagePath)) {
       continue;
@@ -550,17 +550,17 @@ async function resolveStartupDisk(options = {}) {
     throw new Error("自动执行游戏前，请先选择一个扩展硬盘游戏包。");
   }
 
-  const records = await readJson(startupFloppyIndexFile, []);
-  const reusableRecord = records.find((record) => record.configKey === configKey && existsSync(path.join(startupFloppyRoot, record.imageFileName)));
+  const records = await readJson(startupDiskIndexFile, []);
+  const reusableRecord = records.find((record) => record.configKey === configKey && existsSync(path.join(startupDiskRoot, record.imageFileName)));
 
   // 步骤 1：启动前先按基础盘和脚本参数查找是否已有完全相同的系统启动盘，有就直接复用。
   if (reusableRecord) {
-    const imagePath = path.join(startupFloppyRoot, reusableRecord.imageFileName);
+    const imagePath = path.join(startupDiskRoot, reusableRecord.imageFileName);
     const fileStat = await stat(imagePath);
     logServerStep("startup", `复用已存在启动盘: ${imagePath}`);
 
     reusableRecord.lastUsedAt = new Date().toISOString();
-    await writeFile(startupFloppyIndexFile, JSON.stringify(records, null, 2));
+    await writeFile(startupDiskIndexFile, JSON.stringify(records, null, 2));
 
     return {
       reused: true,
@@ -581,20 +581,20 @@ async function resolveStartupDisk(options = {}) {
       paths: {
         baseImagePath: baseImage.filePath,
         bootDiskPath: imagePath,
-        metadataPath: startupFloppyIndexFile
+        metadataPath: startupDiskIndexFile
       }
     };
   }
 
   const imageFileName = buildStartupDiskFileName(normalizedOptions.displayName || selectedPackage?.name || baseImage.name);
-  const imagePath = path.join(startupFloppyRoot, imageFileName);
+  const imagePath = path.join(startupDiskRoot, imageFileName);
   const tempRoot = await mkdtemp(path.join(tmpdir(), "startup-floppy-"));
   const configPath = path.join(tempRoot, "CONFIG.SYS");
   const autoexecPath = path.join(tempRoot, "AUTOEXEC.BAT");
   logServerStep("startup", `开始生成启动盘，基础盘=${baseImage.filePath}`);
-  logServerStep("startup", `输出目录: ${startupFloppyRoot}`);
+  logServerStep("startup", `输出目录: ${startupDiskRoot}`);
   logServerStep("startup", `输出镜像: ${imagePath}`);
-  logServerStep("startup", `索引文件: ${startupFloppyIndexFile}`);
+  logServerStep("startup", `索引文件: ${startupDiskIndexFile}`);
 
   try {
     // 步骤 1：先复制一份基础盘，后续所有加工都在新镜像上完成，避免污染原始盘。
@@ -632,7 +632,7 @@ async function resolveStartupDisk(options = {}) {
   };
 
   records.unshift(record);
-  await writeFile(startupFloppyIndexFile, JSON.stringify(records, null, 2));
+  await writeFile(startupDiskIndexFile, JSON.stringify(records, null, 2));
   logServerStep("startup", `启动盘生成完成: ${imagePath} (${formatBytes(fileStat.size)})`);
 
   return {
@@ -654,7 +654,7 @@ async function resolveStartupDisk(options = {}) {
     paths: {
       baseImagePath: baseImage.filePath,
       bootDiskPath: imagePath,
-      metadataPath: startupFloppyIndexFile
+      metadataPath: startupDiskIndexFile
     }
   };
 }
@@ -852,8 +852,8 @@ function buildStartupDiskPayload(record) {
     packageId: record.packageId || "",
     packageName: record.packageName || "",
     imageFileName: record.imageFileName,
-    url: `/startup-floppy-disks/${encodeURIComponent(record.imageFileName)}`,
-    catalog: "storage/startupFloppyDisk",
+    url: `/startup-disks-files/${encodeURIComponent(record.imageFileName)}`,
+    catalog: "storage/startupDisk",
     options: record.options || {}
   };
 }
