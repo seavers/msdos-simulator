@@ -204,8 +204,8 @@ body {
   align-items: end;
 }
 
-.field-inline > .field {
-  margin-bottom: 0;
+.field-inline > .manage-button {
+  margin-bottom: 12px;
 }
 
 .field input,
