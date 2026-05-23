@@ -5,4 +5,9 @@ storage/images/*
 !storage/images/.gitkeep
 storage/generated/*
 !storage/generated/.gitkeep
+storage/images/index.json
+storage/startupFloppyDisk/*
+!storage/startupFloppyDisk/.gitkeep
+storage/extendDisk/*
+!storage/extendDisk/.gitkeep
 download

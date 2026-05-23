@@ -8,7 +8,7 @@
 
 ### 2.1 硬盘装载
 
-- 已支持把 `download/pal95/` 根目录文件打成 FAT16 数据盘。
+- 已支持把 `storage/extendDisk/pal95/` 根目录文件打成 FAT16 数据盘。
 - 已支持以 `hda` 挂到 `v86`，并在 DOS 中通过 `C:` 访问。
 - 已额外注入：
   - `RUNPAL.BAT`

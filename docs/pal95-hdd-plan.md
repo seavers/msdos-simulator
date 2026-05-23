@@ -5,7 +5,7 @@
 这一阶段先不直接改写 `dos6.22.img`，而是采用下面这条更稳妥的链路：
 
 1. 继续使用 `dos6.22.img` 从 `fda` 启动到 DOS。
-2. 把 `./download/pal95/` 目录打成一块 FAT16 数据硬盘。
+2. 把 `./storage/extendDisk/pal95/` 目录打成一块 FAT16 数据硬盘。
 3. 通过 `v86` 把这块数据盘挂到 `hda`。
 4. 在 DOS 中切换到 `C:` 后运行 `PAL.EXE`。
 

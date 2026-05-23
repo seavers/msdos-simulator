@@ -14,7 +14,7 @@ const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "..");
 const webRoot = path.join(projectRoot, "web");
 const docsRoot = path.join(projectRoot, "docs");
-const profilesFile = path.join(projectRoot, "storage", "profiles.json");
+const profilesFile = path.join(projectRoot, "config", "profiles.json");
 const sessionsFile = path.join(projectRoot, "storage", "sessions.json");
 const diskImagesRoot = path.join(projectRoot, "storage", "images");
 const baseDiskIndexFile = path.join(diskImagesRoot, "index.json");
@@ -31,7 +31,7 @@ const gamePackages = [
   {
     id: "pal95",
     name: "仙剑奇侠传 95",
-    sourceDirectory: "./download/pal95",
+    sourceDirectory: "./storage/extendDisk/pal95",
     volumeLabel: "PAL95",
     imageFileName: "pal95-hdd.img",
     metadataFileName: "pal95-hdd.json",
