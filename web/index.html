@@ -143,6 +143,10 @@
 
         <div class="startup-option-grid">
           <label class="field checkbox">
+            <input id="startup-disk-optimize-memory" type="checkbox" checked />
+            <span>优化常规内存（HIGH/UMB/LH）</span>
+          </label>
+          <label class="field checkbox">
             <input id="startup-disk-auto-run" type="checkbox" checked />
             <span>自动执行游戏启动命令</span>
           </label>
@@ -164,7 +168,7 @@
           </label>
         </div>
 
-        <p class="field-note">生成时会复制一份基础盘，只覆盖 `CONFIG.SYS` 和 `AUTOEXEC.BAT`，并把参数记录到 `storage/startupFloppyDisk/index.json`。</p>
+        <p class="field-note">生成时会复制一份基础盘，只覆盖 `CONFIG.SYS` 和 `AUTOEXEC.BAT`，并把参数记录到 `storage/startupFloppyDisk/index.json`。PAL95 默认推荐关闭 `DOSIDLE` 和 `CD 驱动`，优先验证最小环境。</p>
 
         <div class="startup-dialog-actions">
           <button id="startup-disk-submit-button" type="button">开始生成</button>

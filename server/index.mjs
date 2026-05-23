@@ -523,14 +523,17 @@ function buildPal95SilentSetup(originalSetupBuffer) {
 }
 
 function buildStartupConfigSys(options) {
-  const lines = [
-    "DEVICE=HIMEM.SYS /testmem:off",
-    "FILES=40",
-    "BUFFERS=30"
-  ];
+  const lines = ["DEVICE=HIMEM.SYS /testmem:off"];
+
+  // 步骤 1：在可选的常规内存优化模式下启用 HMA/UMB，并尝试把后续驱动尽量搬出常规内存。
+  if (options.optimizeMemory) {
+    lines.push("DOS=HIGH,UMB", "DEVICE=EMM386.EXE NOEMS", "FILES=30", "BUFFERS=20", "STACKS=0,0");
+  } else {
+    lines.push("FILES=40", "BUFFERS=30");
+  }
 
   if (options.includeCdDriver) {
-    lines.push("", "DEVICE=cd1.SYS /D:banana", "LASTDRIVE=Z");
+    lines.push("", options.optimizeMemory ? "DEVICEHIGH=cd1.SYS /D:banana" : "DEVICE=cd1.SYS /D:banana", "LASTDRIVE=Z");
   }
 
   return [...lines, ""].join("\r\n");
@@ -540,11 +543,11 @@ function buildStartupAutoexecBat(options) {
   const lines = ["@echo off"];
 
   if (options.includeCdDriver) {
-    lines.push("MSCDEX.EXE /D:banana /L:R");
+    lines.push(options.optimizeMemory ? "LH MSCDEX.EXE /D:banana /L:R" : "MSCDEX.EXE /D:banana /L:R");
   }
 
   if (options.includeDosIdle) {
-    lines.push("DOSIDLE");
+    lines.push(options.optimizeMemory ? "LH DOSIDLE" : "DOSIDLE");
   }
 
   if (options.autoSwitchToCDrive) {
@@ -610,6 +613,7 @@ function normalizeStartupDiskOptions(options = {}) {
     displayName: String(options.displayName || "").trim(),
     note: String(options.note || "").trim(),
     soundEnabled: Boolean(options.soundEnabled),
+    optimizeMemory: options.optimizeMemory !== false,
     includeDosIdle: options.includeDosIdle !== false,
     includeCdDriver: options.includeCdDriver !== false,
     autoSwitchToCDrive: options.autoSwitchToCDrive !== false,
@@ -632,6 +636,7 @@ function buildStartupDescription(selectedPackage, baseImage, options) {
   const segments = [
     `基础盘: ${baseImage.name}`,
     `游戏包: ${selectedPackage?.name || "无"}`,
+    `常规内存优化: ${options.optimizeMemory ? "开" : "关"}`,
     `DOSIDLE: ${options.includeDosIdle ? "开" : "关"}`,
     `CD 驱动: ${options.includeCdDriver ? "开" : "关"}`,
     `自动切 C 盘: ${options.autoSwitchToCDrive ? "开" : "关"}`,

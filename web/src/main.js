@@ -31,6 +31,7 @@ const elements = {
   startupDiskDosIdle: document.querySelector("#startup-disk-dosidle"),
   startupDiskName: document.querySelector("#startup-disk-name"),
   startupDiskNote: document.querySelector("#startup-disk-note"),
+  startupDiskOptimizeMemory: document.querySelector("#startup-disk-optimize-memory"),
   startupDiskPackageSelect: document.querySelector("#startup-disk-package-select"),
   startupDiskSound: document.querySelector("#startup-disk-sound"),
   startupDiskSubmitButton: document.querySelector("#startup-disk-submit-button"),
@@ -262,9 +263,10 @@ async function openStartupDiskDialog() {
 
   populateStartupDiskPackageOptions(availableGamePackages);
   elements.startupDiskPackageSelect.value = elements.gamePackageSelect.value || "pal95";
-  elements.startupDiskSound.checked = elements.soundEnabled.checked;
-  elements.startupDiskDosIdle.checked = true;
-  elements.startupDiskCdrom.checked = true;
+  elements.startupDiskOptimizeMemory.checked = true;
+  elements.startupDiskSound.checked = false;
+  elements.startupDiskDosIdle.checked = false;
+  elements.startupDiskCdrom.checked = false;
   elements.startupDiskSwitchC.checked = true;
   elements.startupDiskAutoRun.checked = Boolean(elements.startupDiskPackageSelect.value);
   elements.startupDiskName.value = "";
@@ -286,6 +288,7 @@ async function handleGenerateStartupDisk() {
       displayName: elements.startupDiskName.value.trim(),
       note: elements.startupDiskNote.value.trim(),
       soundEnabled: elements.startupDiskSound.checked,
+      optimizeMemory: elements.startupDiskOptimizeMemory.checked,
       includeDosIdle: elements.startupDiskDosIdle.checked,
       includeCdDriver: elements.startupDiskCdrom.checked,
       autoSwitchToCDrive: elements.startupDiskSwitchC.checked,
@@ -373,12 +376,22 @@ function syncImageSource() {
 }
 
 function syncStartupDialogOptions() {
-  const hasPackage = Boolean(elements.startupDiskPackageSelect.value);
+  const selectedPackageId = elements.startupDiskPackageSelect.value;
+  const hasPackage = Boolean(selectedPackageId);
   elements.startupDiskAutoRun.disabled = !hasPackage;
-  elements.startupDiskSound.disabled = elements.startupDiskPackageSelect.value !== "pal95";
+  elements.startupDiskSound.disabled = selectedPackageId !== "pal95";
 
   if (!hasPackage) {
     elements.startupDiskAutoRun.checked = false;
+    elements.startupDiskSound.checked = false;
+    elements.startupDiskCdrom.checked = false;
+    elements.startupDiskDosIdle.checked = false;
+    elements.startupDiskOptimizeMemory.checked = true;
+  } else if (selectedPackageId === "pal95") {
+    // 步骤 1：PAL95 默认优先走最小环境，先把常规内存腾出来，再逐步加回 DOSIDLE / 光驱 / 声卡变量。
+    elements.startupDiskOptimizeMemory.checked = true;
+    elements.startupDiskCdrom.checked = false;
+    elements.startupDiskDosIdle.checked = false;
     elements.startupDiskSound.checked = false;
   }
 }
