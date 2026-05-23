@@ -75,8 +75,11 @@ export class V86Adapter {
       context.onLog?.(`v86 已就绪，准备从 ${context.diskImage.driveType} 设备启动 ${context.diskImage.name}`);
       context.onLog?.(`兼容配置已生效: memory=${context.config.memoryMb}MB, cpu=${cpuOptions.label}, sound=${context.config.soundEnabled ? "on" : "off"}`);
       if (context.config.soundEnabled) {
-        context.onLog?.(`[声音调试] 当前启动盘布局版本: ${context.imageMeta?.startupDiskLayoutVersion || "pal95-sound-v4"}`);
-        context.onLog?.(`[声音调试] 启动参数硬件对齐: Port=220, IRQ=${context.config.soundIrq || 5}, DMA=1`);
+        const version = context.imageMeta?.startupDiskLayoutVersion || "pal95-sound-v5";
+        const c = context.config;
+        const typeStr = c.soundType === 4 ? "SBPro (T4)" : "SB16 (T6)";
+        context.onLog?.(`[声音调试] 当前启动盘布局版本: ${version}`);
+        context.onLog?.(`[声音调试] 声卡物理参数对齐: Port=${c.soundPort}h, IRQ=${c.soundIrq}, LowDMA=${c.soundDma}, HighDMA=${c.soundHdma}, 型号=${typeStr}, 采样率=${c.soundRate}Hz`);
       }
     });
 

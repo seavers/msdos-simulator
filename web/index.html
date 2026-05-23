@@ -104,16 +104,52 @@
             </label>
             <label class="field checkbox">
               <input id="sound-enabled" type="checkbox" checked />
-              <span>启用 SB16 / AdLib 兼容模式</span>
+              <span>安装声卡（启用 SB16 / AdLib 兼容模式）</span>
             </label>
             <label class="field">
-              <span>声霸卡中断 (IRQ)</span>
+              <span>声卡型号 (Type)</span>
+              <select id="sound-type">
+                <option value="6" selected>Sound Blaster 16 (T6)</option>
+                <option value="4">Sound Blaster Pro (T4)</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>I/O 地址 (Port)</span>
+              <select id="sound-port">
+                <option value="220" selected>220h (默认)</option>
+                <option value="240">240h</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>中断号 (IRQ)</span>
               <select id="sound-irq">
                 <option value="3">IRQ 3</option>
                 <option value="5" selected>IRQ 5 (默认)</option>
                 <option value="7">IRQ 7</option>
                 <option value="9">IRQ 9</option>
                 <option value="10">IRQ 10</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>低位 DMA (Low DMA)</span>
+              <select id="sound-dma">
+                <option value="1" selected>DMA 1 (默认)</option>
+                <option value="3">DMA 3</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>高位 DMA (High DMA)</span>
+              <select id="sound-hdma">
+                <option value="5" selected>DMA 5 (默认)</option>
+                <option value="7">DMA 7</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>音频采样率 (Rate)</span>
+              <select id="sound-rate">
+                <option value="11025">11025 Hz</option>
+                <option value="22050" selected>22050 Hz (默认)</option>
+                <option value="44100">44100 Hz</option>
               </select>
             </label>
           </section>

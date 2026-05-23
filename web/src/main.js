@@ -30,6 +30,11 @@ const elements = {
   serverImageSelect: document.querySelector("#server-image-select"),
   soundEnabled: document.querySelector("#sound-enabled"),
   soundIrq: document.querySelector("#sound-irq"),
+  soundType: document.querySelector("#sound-type"),
+  soundPort: document.querySelector("#sound-port"),
+  soundDma: document.querySelector("#sound-dma"),
+  soundHdma: document.querySelector("#sound-hdma"),
+  soundRate: document.querySelector("#sound-rate"),
   startupDiskAutoRun: document.querySelector("#startup-disk-auto-run"),
   startupDiskCdrom: document.querySelector("#startup-disk-cdrom"),
   startupDiskDosIdle: document.querySelector("#startup-disk-dosidle"),
@@ -127,6 +132,11 @@ function bindEvents() {
   elements.cpuProfile.addEventListener("change", saveSettings);
   elements.soundEnabled.addEventListener("change", saveSettings);
   elements.soundIrq.addEventListener("change", saveSettings);
+  elements.soundType.addEventListener("change", saveSettings);
+  elements.soundPort.addEventListener("change", saveSettings);
+  elements.soundDma.addEventListener("change", saveSettings);
+  elements.soundHdma.addEventListener("change", saveSettings);
+  elements.soundRate.addEventListener("change", saveSettings);
   elements.previewStartupButton.addEventListener("click", handlePreviewStartupScripts);
   elements.bootButton.addEventListener("click", handleBoot);
   elements.resetButton.addEventListener("click", handleReset);
@@ -615,7 +625,12 @@ function collectConfig(profile = null) {
     memoryMb: Number(elements.memorySize.value || profile?.memoryMb || 16),
     cpuProfile: elements.cpuProfile.value || profile?.cpuProfile || "486dx2",
     soundEnabled: elements.soundEnabled.checked,
-    soundIrq: Number(elements.soundIrq.value || 5)
+    soundIrq: Number(elements.soundIrq.value || 5),
+    soundType: Number(elements.soundType.value || 6),
+    soundPort: Number(elements.soundPort.value || 220),
+    soundDma: Number(elements.soundDma.value || 1),
+    soundHdma: Number(elements.soundHdma.value || 5),
+    soundRate: Number(elements.soundRate.value || 22050)
   };
 }
 
@@ -625,6 +640,11 @@ function buildStartupRequestPayload() {
     packageId: elements.gamePackageSelect.value || "",
     soundEnabled: elements.startupDiskSound.checked,
     soundIrq: Number(elements.soundIrq.value || 5),
+    soundType: Number(elements.soundType.value || 6),
+    soundPort: Number(elements.soundPort.value || 220),
+    soundDma: Number(elements.soundDma.value || 1),
+    soundHdma: Number(elements.soundHdma.value || 5),
+    soundRate: Number(elements.soundRate.value || 22050),
     optimizeMemory: elements.startupDiskOptimizeMemory.checked,
     includeDosIdle: elements.startupDiskDosIdle.checked,
     includeCdDriver: elements.startupDiskCdrom.checked,
@@ -881,6 +901,11 @@ function saveSettings() {
     cpuProfile: elements.cpuProfile.value,
     soundEnabled: elements.soundEnabled.checked,
     soundIrq: elements.soundIrq.value,
+    soundType: elements.soundType.value,
+    soundPort: elements.soundPort.value,
+    soundDma: elements.soundDma.value,
+    soundHdma: elements.soundHdma.value,
+    soundRate: elements.soundRate.value,
     startupDiskOptimizeMemory: elements.startupDiskOptimizeMemory.checked,
     startupDiskAutoRun: elements.startupDiskAutoRun.checked,
     startupDiskSound: elements.startupDiskSound.checked,
@@ -935,6 +960,22 @@ function loadSettings() {
 
   if (settings.soundIrq) {
     elements.soundIrq.value = settings.soundIrq;
+  }
+
+  if (settings.soundType) {
+    elements.soundType.value = settings.soundType;
+  }
+  if (settings.soundPort) {
+    elements.soundPort.value = settings.soundPort;
+  }
+  if (settings.soundDma) {
+    elements.soundDma.value = settings.soundDma;
+  }
+  if (settings.soundHdma) {
+    elements.soundHdma.value = settings.soundHdma;
+  }
+  if (settings.soundRate) {
+    elements.soundRate.value = settings.soundRate;
   }
 
   for (const [key, element] of Object.entries({

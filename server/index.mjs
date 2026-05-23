@@ -31,7 +31,7 @@ const supportedDiskExtensions = new Set([".img", ".ima", ".vfd", ".flp", ".iso",
 const execFileAsync = promisify(execFile);
 const defaultBootDiskImageName = "msdos622_dosidle_a.img";
 const fat16PartitionStartSector = 63;
-const startupDiskLayoutVersion = "pal95-sound-v4";
+const startupDiskLayoutVersion = "pal95-sound-v5";
 const knownGameFamilies = {
   pal95: {
     id: "pal95",
@@ -755,10 +755,14 @@ async function buildStartupVirtualFiles(selectedPackage, options = {}) {
   const originalSetupBuffer = await readPal95SetupBuffer(selectedPackage);
   const soundSetupBuffer = Buffer.from(originalSetupBuffer);
   const soundIrq = options.soundIrq || 5;
+  const soundPort = options.soundPort || 220;
 
-  // 强制将声卡参数重写并对齐为 v86 默认的物理配置：IRQ=soundIrq（注：第17-18字节为MIDI端口参数，请勿作为DMA通道修改）
+  // 强制将声卡参数重写并对齐为用户配置的 Port 和 IRQ（注：第17-18字节为MIDI端口参数，请勿作为DMA通道修改）
   if (soundSetupBuffer.length >= 14) {
     soundSetupBuffer.writeUInt16LE(soundIrq, 12);
+  }
+  if (soundSetupBuffer.length >= 16) {
+    soundSetupBuffer.writeUInt16LE(soundPort, 14);
   }
 
   const silentSetupBuffer = buildPal95SilentSetup(originalSetupBuffer);
@@ -770,7 +774,17 @@ async function buildStartupVirtualFiles(selectedPackage, options = {}) {
     },
     {
       name: "RUNPAL.BAT",
-      content: ["@ECHO OFF", "ATTRIB -R C:\\SETUP.DAT >NUL", "COPY /Y A:\\SETPSND.DAT C:\\SETUP.DAT >NUL", `SET BLASTER=A220 I${soundIrq} D1 H5 T6`, "SET SOUND=C:\\", "SET MIDI=SYNTH:1 MAP:E MODE:0", "C:", "CD \\", "PAL.EXE"].join("\r\n") + "\r\n"
+      content: [
+        "@ECHO OFF",
+        "ATTRIB -R C:\\SETUP.DAT >NUL",
+        "COPY /Y A:\\SETPSND.DAT C:\\SETUP.DAT >NUL",
+        `SET BLASTER=A${soundPort} I${soundIrq} D${options.soundDma || 1} H${options.soundHdma || 5} T${options.soundType || 6}`,
+        "SET SOUND=C:\\",
+        "SET MIDI=SYNTH:1 MAP:E MODE:0",
+        "C:",
+        "CD \\",
+        "PAL.EXE"
+      ].join("\r\n") + "\r\n"
     },
     {
       name: "PALDIAG.BAT",
@@ -1007,6 +1021,11 @@ function normalizeStartupDiskOptions(options = {}) {
     note: String(options.note || "").trim(),
     soundEnabled: Boolean(options.soundEnabled),
     soundIrq: Number(options.soundIrq || 5),
+    soundType: Number(options.soundType || 6),
+    soundPort: Number(options.soundPort || 220),
+    soundDma: Number(options.soundDma || 1),
+    soundHdma: Number(options.soundHdma || 5),
+    soundRate: Number(options.soundRate || 22050),
     optimizeMemory: options.optimizeMemory !== false,
     includeDosIdle: options.includeDosIdle !== false,
     includeCdDriver,
@@ -1042,6 +1061,11 @@ function buildStartupDiskConfigKey(baseImage, selectedPackage, options) {
     packageImageUpdatedAt: selectedPackage?.mount?.updatedAt || "",
     soundEnabled: options.soundEnabled,
     soundIrq: options.soundIrq || 5,
+    soundType: options.soundType || 6,
+    soundPort: options.soundPort || 220,
+    soundDma: options.soundDma || 1,
+    soundHdma: options.soundHdma || 5,
+    soundRate: options.soundRate || 22050,
     optimizeMemory: options.optimizeMemory,
     includeDosIdle: options.includeDosIdle,
     includeCdDriver: options.includeCdDriver,
