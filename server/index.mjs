@@ -31,7 +31,7 @@ const supportedDiskExtensions = new Set([".img", ".ima", ".vfd", ".flp", ".iso",
 const execFileAsync = promisify(execFile);
 const defaultBootDiskImageName = "msdos622_dosidle_a.img";
 const fat16PartitionStartSector = 63;
-const startupDiskLayoutVersion = "pal95-sound-v5";
+const startupDiskLayoutVersion = "pal95-sound-v6";
 const knownGameFamilies = {
   pal95: {
     id: "pal95",
@@ -756,13 +756,16 @@ async function buildStartupVirtualFiles(selectedPackage, options = {}) {
   const soundSetupBuffer = Buffer.from(originalSetupBuffer);
   const soundIrq = options.soundIrq || 5;
   const soundPort = options.soundPort || 220;
+  
+  // 关键修复：Port在前端是十进制数值如 220，但在 SETUP.DAT 二进制中需要写入十六进制 0x220（即十进制 544）
+  const hexPort = parseInt(soundPort.toString(), 16);
 
   // 强制将声卡参数重写并对齐为用户配置的 Port 和 IRQ（注：第17-18字节为MIDI端口参数，请勿作为DMA通道修改）
   if (soundSetupBuffer.length >= 14) {
     soundSetupBuffer.writeUInt16LE(soundIrq, 12);
   }
   if (soundSetupBuffer.length >= 16) {
-    soundSetupBuffer.writeUInt16LE(soundPort, 14);
+    soundSetupBuffer.writeUInt16LE(hexPort, 14);
   }
 
   const silentSetupBuffer = buildPal95SilentSetup(originalSetupBuffer);
