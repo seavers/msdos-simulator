@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { buildFat16Image, describeSourceDirectory } from "./fat16-image-builder.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,7 +17,7 @@ const profilesFile = path.join(projectRoot, "config", "profiles.json");
 const sessionsFile = path.join(projectRoot, "storage", "sessions.json");
 const diskImagesRoot = path.join(projectRoot, "storage", "images");
 const baseDiskIndexFile = path.join(diskImagesRoot, "index.json");
-const generatedDiskRoot = path.join(projectRoot, "storage", "generated");
+const extendDiskRoot = path.join(projectRoot, "storage", "extendDisk");
 const startupDiskRoot = path.join(projectRoot, "storage", "startupDisk");
 const startupDiskIndexFile = path.join(startupDiskRoot, "index.json");
 const v86BiosRoot = path.join(projectRoot, "storage", "runtime", "v86", "bios");
@@ -27,25 +26,20 @@ const v86BuildRoot = v86PackageRoot ? path.join(v86PackageRoot, "build") : null;
 const supportedDiskExtensions = new Set([".img", ".ima", ".vfd", ".flp", ".iso", ".bin"]);
 const execFileAsync = promisify(execFile);
 const defaultBootDiskImageName = "msdos622_dosidle_a.img";
-const gamePackages = [
-  {
+const knownGameFamilies = {
+  pal95: {
     id: "pal95",
     name: "仙剑奇侠传 95",
-    sourceDirectory: "./storage/extendDisk/pal95",
-    volumeLabel: "PAL95",
-    imageFileName: "pal95-hdd.img",
-    metadataFileName: "pal95-hdd.json",
-    preferredSlot: "hda",
-    launchCommand: "C:\\\rRUNSAFE\r",
+    launchCommand: "RUNSAFE",
     compatibility: {
-      storage: { level: "ready", summary: "已支持把 pal95 目录固化为 FAT16 数据盘，并以 hda 方式挂载到 DOS。" },
-      memory: { level: "ready", summary: "已支持把总内存参数传给 v86；XMS/EMS 仍取决于 dos 启动镜像中的 CONFIG.SYS/AUTOEXEC.BAT。" },
-      vga: { level: "ready", summary: "已支持 VGA BIOS 与图形模式切换，前端会记录分辨率/色深变化，便于观察 320x200 256 色进入情况。" },
-      sound: { level: "partial", summary: "当前默认优先走静音兼容启动，以绕过 PLAY 模块报错；SB16 / AdLib 仍需后续继续调试。" },
-      timing: { level: "partial", summary: "当前依赖 v86 的 PIT/CPU 调度，已适合首轮验证；若存在动画或音乐速度异常，需要继续做专项时序调优。" }
+      storage: { level: "ready", summary: "当前方案直接挂载原始扩展盘镜像，不再重打 FAT16 数据盘。" },
+      memory: { level: "ready", summary: "已支持通过系统盘脚本控制 HIMEM、EMM386、DOS=HIGH,UMB 等启动参数。" },
+      vga: { level: "ready", summary: "已支持 VGA BIOS 与图形模式切换日志，便于观察 PAL95 的 320x200 图形模式。" },
+      sound: { level: "partial", summary: "当前声音链路只通过启动盘脚本注入环境变量，不再改写原始游戏镜像内的 SETUP.DAT。" },
+      timing: { level: "partial", summary: "当前依赖 v86 默认 CPU/PIT 时序，若出现速度异常，需要继续做专项调优。" }
     }
   }
-];
+};
 
 const defaultProfiles = [
   { id: "dos-default", name: "MS-DOS 6.0 默认", memoryMb: 16, cpuProfile: "486dx2", soundEnabled: true },
@@ -56,7 +50,7 @@ await ensureJsonFile(profilesFile, defaultProfiles);
 await ensureJsonFile(sessionsFile, []);
 await ensureDirectory(diskImagesRoot);
 await ensureJsonFile(baseDiskIndexFile, []);
-await ensureDirectory(generatedDiskRoot);
+await ensureDirectory(extendDiskRoot);
 await ensureDirectory(startupDiskRoot);
 await ensureJsonFile(startupDiskIndexFile, []);
 await ensureDirectory(v86BiosRoot);
@@ -133,13 +127,6 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (url.pathname.startsWith("/api/game-packages/") && url.pathname.endsWith("/materialize") && request.method === "POST") {
-      const packageId = path.basename(url.pathname.replace("/materialize", ""));
-      const payload = await readBody(request);
-      sendJson(response, 200, await materializeGamePackage(packageId, payload));
-      return;
-    }
-
     if (url.pathname === "/api/sessions" && request.method === "POST") {
       const payload = await readBody(request);
       const sessions = await readJson(sessionsFile, []);
@@ -168,15 +155,15 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (url.pathname.startsWith("/generated-disks/")) {
-      const fileName = path.basename(decodeURIComponent(url.pathname.replace("/generated-disks/", "")));
-      await sendFile(response, path.join(generatedDiskRoot, fileName), [generatedDiskRoot]);
-      return;
-    }
-
     if (url.pathname.startsWith("/startup-disks-files/")) {
       const fileName = path.basename(decodeURIComponent(url.pathname.replace("/startup-disks-files/", "")));
       await sendFile(response, path.join(startupDiskRoot, fileName), [startupDiskRoot]);
+      return;
+    }
+
+    if (url.pathname.startsWith("/extend-disks-files/")) {
+      const fileName = path.basename(decodeURIComponent(url.pathname.replace("/extend-disks-files/", "")));
+      await sendFile(response, path.join(extendDiskRoot, fileName), [extendDiskRoot]);
       return;
     }
 
@@ -370,152 +357,15 @@ function sortDiskImages(diskImages) {
 }
 
 async function listGamePackages() {
-  const packages = [];
-
-  for (const gamePackage of gamePackages) {
-    const available = existsSync(gamePackage.sourceDirectory);
-    let fileCount = 0;
-    let totalSize = 0;
-
-    if (available) {
-      const description = await describeSourceDirectory(gamePackage.sourceDirectory);
-      fileCount = description.fileCount;
-      totalSize = description.totalSize;
-    }
-
-    packages.push({
-      id: gamePackage.id,
-      name: gamePackage.name,
-      available,
-      preferredSlot: gamePackage.preferredSlot,
-      sourceDirectory: gamePackage.sourceDirectory,
-      fileCount,
-      totalSize,
-      totalSizeLabel: totalSize > 0 ? formatBytes(totalSize) : "0 KB",
-      launchCommand: gamePackage.launchCommand,
-      compatibility: gamePackage.compatibility
-    });
-  }
-
-  return packages;
-}
-
-async function materializeGamePackage(packageId, options = {}) {
-  const gamePackage = gamePackages.find((item) => item.id === packageId);
-
-  if (!gamePackage) {
-    throw new Error(`未找到游戏包: ${packageId}`);
-  }
-
-  if (!existsSync(gamePackage.sourceDirectory)) {
-    throw new Error(`游戏包目录不存在: ${gamePackage.sourceDirectory}`);
-  }
-
-  const imagePath = path.join(generatedDiskRoot, gamePackage.imageFileName);
-  const metadataPath = path.join(generatedDiskRoot, gamePackage.metadataFileName);
-  const launchSoundEnabled = Boolean(options.soundEnabled);
-  logServerStep("pal95", `开始物化游戏盘，sound=${launchSoundEnabled ? "on" : "off"}`);
-  logServerStep("pal95", `固定游戏目录: ${path.resolve(gamePackage.sourceDirectory)}`);
-  logServerStep("pal95", `输出硬盘镜像: ${imagePath}`);
-  logServerStep("pal95", `输出元数据: ${metadataPath}`);
-  const originalSetupBuffer = await readFile(path.join(gamePackage.sourceDirectory, "SETUP.DAT"));
-  const silentSetupBuffer = buildPal95SilentSetup(originalSetupBuffer);
-  const virtualFiles = [
-    {
-      name: "RUNPAL.BAT",
-      content: [
-        "@ECHO OFF",
-        "COPY /Y SETPSND.DAT SETUP.DAT >NUL",
-        "SET BLASTER=A220 I7 D1 H5 T6",
-        "SET SOUND=C:\\",
-        "SET MIDI=SYNTH:1 MAP:E MODE:0",
-        "PAL.EXE"
-      ].join("\r\n") + "\r\n"
-    },
-    {
-      name: "RUNSAFE.BAT",
-      content: [
-        "@ECHO OFF",
-        "COPY /Y SETPNOS.DAT SETUP.DAT >NUL",
-        "SET BLASTER=",
-        "SET SOUND=",
-        "SET MIDI=",
-        "PAL.EXE"
-      ].join("\r\n") + "\r\n"
-    },
-    {
-      name: "PALDIAG.BAT",
-      content: [
-        "@ECHO OFF",
-        "ECHO PAL95 DOS 兼容诊断",
-        "ECHO ------------------------------",
-        "VER",
-        "MEM",
-        "SET BLASTER",
-        "DIR PAL.EXE",
-        "ECHO.",
-        "ECHO 先执行 RUNSAFE 绕过 PLAY 模块，再视情况尝试 RUNPAL。"
-      ].join("\r\n") + "\r\n"
-    },
-    {
-      name: "PALREAD.TXT",
-      content: [
-        "PAL95 DOS 模拟提示",
-        "",
-        "1. 先执行 PALDIAG 查看 DOS 内存与 BLASTER 环境。",
-        "2. 优先执行 RUNSAFE 绕过 PLAY 模块的声卡初始化。",
-        "3. 若静音模式可进游戏，再尝试 RUNPAL 验证声音。",
-        "4. 若黑屏或卡死，重点关注 VGA 模式切换日志。"
-      ].join("\r\n") + "\r\n"
-    },
-    {
-      name: "SETPSND.DAT",
-      content: originalSetupBuffer
-    },
-    {
-      name: "SETPNOS.DAT",
-      content: silentSetupBuffer
-    }
-  ];
-
-  // 步骤 1：先把游戏目录固化成一块新的 FAT16 数据盘，保证前端拿到的始终是与当前目录同步的镜像。
-  logServerStep("pal95", `开始写入 FAT16 游戏盘，共注入 ${virtualFiles.length} 个附加文件。`);
-  await buildFat16Image({
-    sourceDirectory: gamePackage.sourceDirectory,
-    outputPath: imagePath,
-    metadataPath,
-    volumeLabel: gamePackage.volumeLabel,
-    virtualFiles
-  });
-
-  const imageStat = await stat(imagePath);
-  logServerStep("pal95", `游戏盘写入完成: ${imagePath} (${formatBytes(imageStat.size)})`);
-
-  return {
-    id: gamePackage.id,
-    name: gamePackage.name,
-    launchCommand: launchSoundEnabled ? "C:\\\rRUNPAL\r" : gamePackage.launchCommand,
-    compatibility: gamePackage.compatibility,
-    paths: {
-      diskImagePath: imagePath,
-      metadataPath
-    },
-    mount: {
-      name: gamePackage.imageFileName,
-      url: `/generated-disks/${encodeURIComponent(gamePackage.imageFileName)}`,
-      size: imageStat.size,
-      sizeLabel: formatBytes(imageStat.size),
-      driveType: "hardDisk",
-      preferredSlot: gamePackage.preferredSlot
-    }
-  };
+  const diskImages = await collectDiskImages(extendDiskRoot, "/extend-disks-files/", "storage/extendDisk");
+  return diskImages.map((diskImage) => buildGamePackageFromDiskImage(diskImage));
 }
 
 async function previewStartupDisk(options = {}) {
   const normalizedOptions = normalizeStartupDiskOptions(options);
   const baseImage = await resolveBaseDiskImageByName(normalizedOptions.baseImageName);
-  const selectedPackage = normalizedOptions.packageId ? gamePackages.find((item) => item.id === normalizedOptions.packageId) : null;
-  const configKey = buildStartupDiskConfigKey(baseImage, normalizedOptions);
+  const selectedPackage = normalizedOptions.packageId ? await resolveGamePackageById(normalizedOptions.packageId) : null;
+  const configKey = buildStartupDiskConfigKey(baseImage, selectedPackage, normalizedOptions);
 
   if (normalizedOptions.packageId && !selectedPackage) {
     throw new Error(`未找到游戏包: ${normalizedOptions.packageId}`);
@@ -532,15 +382,15 @@ async function previewStartupDisk(options = {}) {
     systemDiskName: baseImage.name,
     startupDiskName: buildDefaultStartupDiskName(selectedPackage, normalizedOptions),
     configSys: buildStartupConfigSys(normalizedOptions),
-    autoexecBat: buildStartupAutoexecBat(normalizedOptions)
+    autoexecBat: buildStartupAutoexecBat(selectedPackage, normalizedOptions)
   };
 }
 
 async function resolveStartupDisk(options = {}) {
   const normalizedOptions = normalizeStartupDiskOptions(options);
   const baseImage = await resolveBaseDiskImageByName(normalizedOptions.baseImageName);
-  const selectedPackage = normalizedOptions.packageId ? gamePackages.find((item) => item.id === normalizedOptions.packageId) : null;
-  const configKey = buildStartupDiskConfigKey(baseImage, normalizedOptions);
+  const selectedPackage = normalizedOptions.packageId ? await resolveGamePackageById(normalizedOptions.packageId) : null;
+  const configKey = buildStartupDiskConfigKey(baseImage, selectedPackage, normalizedOptions);
 
   if (normalizedOptions.packageId && !selectedPackage) {
     throw new Error(`未找到游戏包: ${normalizedOptions.packageId}`);
@@ -576,7 +426,7 @@ async function resolveStartupDisk(options = {}) {
         configKey,
         description: reusableRecord.description,
         configSys: buildStartupConfigSys(normalizedOptions),
-        autoexecBat: buildStartupAutoexecBat(normalizedOptions)
+        autoexecBat: buildStartupAutoexecBat(selectedPackage, normalizedOptions)
       },
       paths: {
         baseImagePath: baseImage.filePath,
@@ -591,6 +441,7 @@ async function resolveStartupDisk(options = {}) {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "startup-floppy-"));
   const configPath = path.join(tempRoot, "CONFIG.SYS");
   const autoexecPath = path.join(tempRoot, "AUTOEXEC.BAT");
+  const startupVirtualFiles = buildStartupVirtualFiles(selectedPackage);
   logServerStep("startup", `开始生成启动盘，基础盘=${baseImage.filePath}`);
   logServerStep("startup", `输出目录: ${startupDiskRoot}`);
   logServerStep("startup", `输出镜像: ${imagePath}`);
@@ -602,12 +453,20 @@ async function resolveStartupDisk(options = {}) {
 
     // 步骤 2：根据勾选参数生成最小启动配置，只覆盖 DOS 启动脚本，不修改其他系统文件。
     await writeFile(configPath, buildStartupConfigSys(normalizedOptions), "ascii");
-    await writeFile(autoexecPath, buildStartupAutoexecBat(normalizedOptions), "ascii");
+    await writeFile(autoexecPath, buildStartupAutoexecBat(selectedPackage, normalizedOptions), "ascii");
     logServerStep("startup", `临时 CONFIG.SYS: ${configPath}`);
     logServerStep("startup", `临时 AUTOEXEC.BAT: ${autoexecPath}`);
 
     await execFileAsync("mcopy", ["-o", "-i", imagePath, configPath, "::CONFIG.SYS"]);
     await execFileAsync("mcopy", ["-o", "-i", imagePath, autoexecPath, "::AUTOEXEC.BAT"]);
+
+    // 步骤 3：把辅助批处理和说明文件写入 A 盘，避免再改写原始扩展盘镜像。
+    for (const virtualFile of startupVirtualFiles) {
+      const tempFilePath = path.join(tempRoot, virtualFile.name);
+      await writeFile(tempFilePath, virtualFile.content);
+      await execFileAsync("mcopy", ["-o", "-i", imagePath, tempFilePath, `::${virtualFile.name}`]);
+    }
+
     logServerStep("startup", `已写回镜像系统配置: ${imagePath}`);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
@@ -649,7 +508,7 @@ async function resolveStartupDisk(options = {}) {
       configKey,
       description: record.description,
       configSys: buildStartupConfigSys(normalizedOptions),
-      autoexecBat: buildStartupAutoexecBat(normalizedOptions)
+      autoexecBat: buildStartupAutoexecBat(selectedPackage, normalizedOptions)
     },
     paths: {
       baseImagePath: baseImage.filePath,
@@ -676,17 +535,6 @@ async function detectBootSignature(filePath) {
   }
 }
 
-function buildPal95SilentSetup(originalSetupBuffer) {
-  const silentSetupBuffer = Buffer.from(originalSetupBuffer);
-
-  // 步骤 1：保留文件头标识，只清空已知的声音设备选项区，优先构造“无声卡”兼容配置。
-  for (let offset = 8; offset <= 18 && offset + 1 < silentSetupBuffer.length; offset += 2) {
-    silentSetupBuffer.writeUInt16LE(0, offset);
-  }
-
-  return silentSetupBuffer;
-}
-
 function buildStartupConfigSys(options) {
   const lines = ["DEVICE=HIMEM.SYS /testmem:off"];
 
@@ -704,7 +552,7 @@ function buildStartupConfigSys(options) {
   return [...lines, ""].join("\r\n");
 }
 
-function buildStartupAutoexecBat(options) {
+function buildStartupAutoexecBat(selectedPackage, options) {
   const lines = ["@echo off"];
 
   // 步骤 2：把 MSCDEX 与底层 CD 驱动拆开控制，便于继续定位到底是哪一层触发了兼容问题。
@@ -716,15 +564,56 @@ function buildStartupAutoexecBat(options) {
     lines.push(options.optimizeMemory ? "LH DOSIDLE" : "DOSIDLE");
   }
 
-  if (options.autoRunGame) {
+  if (options.autoRunGame && selectedPackage?.familyId === "pal95") {
+    lines.push(options.soundEnabled ? "RUNPAL" : "RUNSAFE");
+  } else if (options.autoRunGame && selectedPackage) {
     lines.push("C:");
   }
 
-  if (options.autoRunGame && options.packageId === "pal95") {
-    lines.push(options.soundEnabled ? "RUNPAL" : "RUNSAFE");
+  return [...lines, ""].join("\r\n");
+}
+
+function buildStartupVirtualFiles(selectedPackage) {
+  if (!selectedPackage || selectedPackage.familyId !== "pal95") {
+    return [];
   }
 
-  return [...lines, ""].join("\r\n");
+  return [
+    {
+      name: "RUNSAFE.BAT",
+      content: ["@ECHO OFF", "SET BLASTER=", "SET SOUND=", "SET MIDI=", "C:", "CD \\", "PAL.EXE"].join("\r\n") + "\r\n"
+    },
+    {
+      name: "RUNPAL.BAT",
+      content: ["@ECHO OFF", "SET BLASTER=A220 I7 D1 H5 T6", "SET SOUND=C:\\", "SET MIDI=SYNTH:1 MAP:E MODE:0", "C:", "CD \\", "PAL.EXE"].join("\r\n") + "\r\n"
+    },
+    {
+      name: "PALDIAG.BAT",
+      content: [
+        "@ECHO OFF",
+        "ECHO PAL95 DOS 兼容诊断",
+        "ECHO ------------------------------",
+        "VER",
+        "MEM",
+        "SET BLASTER",
+        "C:",
+        "CD \\",
+        "DIR PAL.EXE",
+        "ECHO.",
+        "ECHO 当前方案不会改写 C 盘镜像内的 SETUP.DAT。"
+      ].join("\r\n") + "\r\n"
+    },
+    {
+      name: "PALREAD.TXT",
+      content: [
+        "PAL95 启动说明",
+        "",
+        "1. 当前方案直接挂载 storage/extendDisk 下的原始镜像作为 C 盘。",
+        "2. RUNSAFE/RUNPAL 仅放在 A 盘，不会改写 C 盘镜像中的 SETUP.DAT。",
+        "3. 如果原始镜像需要特定 SETUP.DAT、批处理或目录结构，请先在线下调整。"
+      ].join("\r\n") + "\r\n"
+    }
+  ];
 }
 
 async function collectDiskImages(rootPath, urlPrefix, catalog) {
@@ -772,6 +661,11 @@ async function resolveBaseDiskImageByName(imageName) {
   return image;
 }
 
+async function resolveGamePackageById(packageId) {
+  const gamePackages = await listGamePackages();
+  return gamePackages.find((item) => item.id === packageId) || null;
+}
+
 function normalizeStartupDiskOptions(options = {}) {
   const includeCdDriver = options.includeCdDriver !== false;
 
@@ -789,12 +683,15 @@ function normalizeStartupDiskOptions(options = {}) {
   };
 }
 
-function buildStartupDiskConfigKey(baseImage, options) {
+function buildStartupDiskConfigKey(baseImage, selectedPackage, options) {
   const payload = {
     baseImageName: baseImage.name,
     baseImageSize: baseImage.size,
     baseImageUpdatedAt: baseImage.updatedAt,
-    packageId: options.packageId,
+    packageId: selectedPackage?.id || "",
+    packageImageName: selectedPackage?.mount?.name || "",
+    packageImageSize: selectedPackage?.mount?.size || 0,
+    packageImageUpdatedAt: selectedPackage?.mount?.updatedAt || "",
     soundEnabled: options.soundEnabled,
     optimizeMemory: options.optimizeMemory,
     includeDosIdle: options.includeDosIdle,
@@ -820,7 +717,7 @@ function buildDefaultStartupDiskName(selectedPackage, options) {
 function buildStartupDescription(selectedPackage, baseImage, options) {
   const segments = [
     `基础盘: ${baseImage.name}`,
-    `游戏包: ${selectedPackage?.name || "无"}`,
+    `扩展盘: ${selectedPackage?.mount?.name || "无"}`,
     `常规内存优化: ${options.optimizeMemory ? "开" : "关"}`,
     `DOSIDLE: ${options.includeDosIdle ? "开" : "关"}`,
     `CD 驱动: ${options.includeCdDriver ? "开" : "关"}`,
@@ -828,7 +725,7 @@ function buildStartupDescription(selectedPackage, baseImage, options) {
     `自动执行游戏: ${options.autoRunGame ? "开" : "关"}`
   ];
 
-  if (selectedPackage?.id === "pal95") {
+  if (selectedPackage?.familyId === "pal95") {
     segments.push(`声音模式: ${options.soundEnabled ? "RUNPAL" : "RUNSAFE"}`);
   }
 
@@ -856,6 +753,40 @@ function buildStartupDiskPayload(record) {
     catalog: "storage/startupDisk",
     options: record.options || {}
   };
+}
+
+function buildGamePackageFromDiskImage(diskImage) {
+  const family = inferKnownGameFamily(diskImage.name);
+  const preferredSlot = diskImage.driveType === "cdrom" ? "cdrom" : "hda";
+
+  return {
+    id: diskImage.name,
+    familyId: family?.id || "",
+    name: family?.name || path.parse(diskImage.name).name,
+    available: true,
+    preferredSlot,
+    sourcePath: diskImage.filePath,
+    launchCommand: family?.launchCommand || "",
+    compatibility: family?.compatibility || null,
+    mount: {
+      name: diskImage.name,
+      url: diskImage.url,
+      size: diskImage.size,
+      sizeLabel: diskImage.sizeLabel,
+      updatedAt: diskImage.updatedAt,
+      driveType: preferredSlot === "cdrom" ? "cdrom" : "hardDisk"
+    }
+  };
+}
+
+function inferKnownGameFamily(fileName) {
+  const normalizedName = fileName.toLowerCase();
+
+  if (normalizedName.includes("pal95") || normalizedName.includes("xianjian") || normalizedName.includes("仙剑")) {
+    return knownGameFamilies.pal95;
+  }
+
+  return null;
 }
 
 function slugifyFileName(value) {

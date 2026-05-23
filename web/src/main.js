@@ -192,7 +192,7 @@ async function handleBoot() {
     appendLog(`系统盘路径: ${resolvedStartupDisk.paths.baseImagePath}`);
     appendLog(`启动盘路径: ${resolvedStartupDisk.paths.bootDiskPath}`);
 
-    const attachments = await resolveSelectedAttachments(config);
+    const attachments = await resolveSelectedAttachments();
     inputBuffer = "";
     terminal.setInputBuffer("");
     elements.runtimeMode.textContent = "适配器: v86";
@@ -398,8 +398,10 @@ function syncProfileSelection() {
   elements.cpuProfile.value = profile.cpuProfile;
   elements.soundEnabled.checked = Boolean(profile.soundEnabled);
 
-  if (profile.id === "pal95" && Array.from(elements.gamePackageSelect.options).some((option) => option.value === "pal95")) {
-    elements.gamePackageSelect.value = "pal95";
+  const preferredPal95Package = availableGamePackages.find((item) => item.familyId === "pal95" && item.available);
+
+  if (profile.id === "pal95" && preferredPal95Package) {
+    elements.gamePackageSelect.value = preferredPal95Package.id;
     applyPal95StartupDefaults();
     appendLog("仙剑 95 兼容预设默认使用静音启动和最小系统盘脚本。");
   }
@@ -425,9 +427,10 @@ function syncStartupOptionDefaults() {
 }
 
 function syncStartupOptionStates() {
-  const hasPackage = Boolean(elements.gamePackageSelect.value);
+  const selectedPackage = getSelectedGamePackage();
+  const hasPackage = Boolean(selectedPackage);
   elements.startupDiskAutoRun.disabled = !hasPackage;
-  elements.startupDiskSound.disabled = elements.gamePackageSelect.value !== "pal95";
+  elements.startupDiskSound.disabled = selectedPackage?.familyId !== "pal95";
 
   if (!hasPackage) {
     elements.startupDiskAutoRun.checked = false;
@@ -491,14 +494,21 @@ function populateSystemDiskImages(items) {
 
 function populateGamePackages(items) {
   const availableItems = items.filter((item) => item.available);
-  elements.gamePackageSelect.innerHTML = ['<option value="">不挂载扩展硬盘</option>', ...availableItems.map((item) => `<option value="${item.id}">${item.name} · ${item.totalSizeLabel} · ${item.preferredSlot.toUpperCase()}</option>`)].join("");
+  elements.gamePackageSelect.innerHTML = [
+    '<option value="">不挂载扩展硬盘</option>',
+    ...availableItems.map((item) => `<option value="${item.id}">${item.name} · ${item.mount.sizeLabel} · ${item.preferredSlot.toUpperCase()}</option>`)
+  ].join("");
   elements.gamePackageSelect.disabled = availableItems.length === 0;
 
-  const preferredGamePackage = availableItems.find((item) => item.id === "pal95");
+  const preferredGamePackage = availableItems.find((item) => item.familyId === "pal95");
   if (preferredGamePackage) {
     elements.gamePackageSelect.value = preferredGamePackage.id;
     applyPal95StartupDefaults();
   }
+}
+
+function getSelectedGamePackage() {
+  return availableGamePackages.find((item) => item.id === elements.gamePackageSelect.value && item.available) || null;
 }
 
 function updateLifecycle(status, context) {
@@ -550,42 +560,28 @@ function resolveSelectedImage() {
   };
 }
 
-async function resolveSelectedAttachments(config) {
-  const selectedPackageId = elements.gamePackageSelect.value;
+async function resolveSelectedAttachments() {
+  const selectedPackage = getSelectedGamePackage();
 
-  if (!selectedPackageId) {
+  if (!selectedPackage) {
     return [];
   }
 
-  const selectedPackage = availableGamePackages.find((item) => item.id === selectedPackageId && item.available);
-
-  if (!selectedPackage) {
-    throw new Error("所选扩展硬盘不可用，请先确认 pal95 游戏目录存在。");
-  }
-
-  // 步骤 4：启动前先在服务端把游戏目录固化为 FAT16 数据盘，避免前端直接处理大量原始文件。
-  appendLog(`正在准备扩展硬盘: ${selectedPackage.name}`);
-  const materializedPackage = await fetchJson(`/api/game-packages/${encodeURIComponent(selectedPackage.id)}/materialize`, {
-    method: "POST",
-    body: JSON.stringify({
-      soundEnabled: Boolean(config?.soundEnabled)
-    })
-  });
-
-  appendLog(`扩展硬盘已就绪: ${materializedPackage.name} -> ${materializedPackage.mount.preferredSlot.toUpperCase()} (${materializedPackage.mount.sizeLabel})，当前推荐命令为 ${materializedPackage.launchCommand.includes("RUNSAFE") ? "RUNSAFE" : "RUNPAL"}。`);
+  // 步骤 4：扩展盘直接挂载 storage/extendDisk 下的原始镜像，不再生成中间 FAT16 数据盘。
+  appendLog(`扩展硬盘已就绪: ${selectedPackage.mount.name} -> ${selectedPackage.preferredSlot.toUpperCase()} (${selectedPackage.mount.sizeLabel})`);
   return [
     {
-      id: materializedPackage.id,
-      label: materializedPackage.name,
-      launchCommand: materializedPackage.launchCommand,
-      compatibility: materializedPackage.compatibility,
-      preferredSlot: materializedPackage.mount.preferredSlot,
+      id: selectedPackage.id,
+      label: selectedPackage.name,
+      launchCommand: selectedPackage.familyId === "pal95" ? (elements.startupDiskSound.checked ? "RUNPAL" : "RUNSAFE") : "",
+      compatibility: selectedPackage.compatibility,
+      preferredSlot: selectedPackage.preferredSlot,
       diskImage: {
         source: "server",
-        name: materializedPackage.mount.name,
-        size: materializedPackage.mount.size,
-        url: materializedPackage.mount.url,
-        driveType: materializedPackage.mount.driveType
+        name: selectedPackage.mount.name,
+        size: selectedPackage.mount.size,
+        url: selectedPackage.mount.url,
+        driveType: selectedPackage.mount.driveType
       }
     }
   ];

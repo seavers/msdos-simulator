@@ -9,7 +9,7 @@
 - 前端主流程在浏览器中运行，显示层使用 `Canvas` 渲染。
 - 后端提供配置、会话、镜像元信息记录能力。
 - 模拟器内核通过适配层抽象，当前包含 `MockDosAdapter` 与 `V86Adapter` 接入边界。
-- 支持本地镜像文件选择、镜像头部 Boot Signature 检查、启动参数管理、运行日志展示。
+- 支持系统盘目录扫描、扩展盘目录扫描、启动参数管理、运行日志展示。
 
 ## 2. 分层架构
 
@@ -84,6 +84,10 @@ interface DosAdapter {
 
 - `GET /api/health`: 健康检查。
 - `GET /api/profiles`: 启动配置预设。
+- `GET /api/base-disk-images`: 读取 `storage/images/` 下的系统盘镜像。
+- `GET /api/game-packages`: 读取 `storage/extendDisk/` 下的扩展盘镜像。
+- `POST /api/startup-disks/preview`: 预览生成后的 `CONFIG.SYS` / `AUTOEXEC.BAT`。
+- `POST /api/startup-disks`: 复用或生成 `storage/startupDisk/` 下的系统启动盘。
 - `POST /api/sessions`: 记录镜像元信息与启动参数。
 
 后续建议扩展：
@@ -126,9 +130,9 @@ interface DosAdapter {
 
 要实现《仙剑奇侠传 95》可运行，建议按下面顺序推进：
 
-1. 先完成 MS-DOS 6.0 软盘/硬盘镜像稳定启动。
-2. 补齐 `CONFIG.SYS` / `AUTOEXEC.BAT` 对 XMS/EMS 的配置兼容。
-3. 实现或验证以下设备能力：
+1. 先完成 MS-DOS 6.0 系统盘稳定启动。
+2. 通过 `startupDisk` 补齐 `CONFIG.SYS` / `AUTOEXEC.BAT` 对 XMS/EMS 的配置兼容。
+3. 直接挂载 `storage/extendDisk/` 里的原始 PAL95 镜像并验证以下设备能力：
    - VGA 256 色模式。
    - PS/2 键盘输入。
    - PIT 定时器。
@@ -146,8 +150,12 @@ interface DosAdapter {
 ```text
 server/
   index.mjs                # 配置、会话、静态资源服务
-storage/
+config/
   profiles.json            # 启动预设
+storage/
+  images/                  # 原始系统盘镜像
+  startupDisk/             # 生成后的系统启动盘
+  extendDisk/              # 原始扩展盘镜像
   sessions.json            # 最近会话
 web/
   index.html               # 主界面
@@ -167,7 +175,7 @@ docs/
 
 要让“真实 MS-DOS 6.0 镜像启动并进一步跑仙剑 95”真正达成，下一阶段核心工作是：
 
-1. 接入真实 DOS 模拟内核，优先推荐 `v86`。
-2. 把镜像文件从“元信息记录”升级为“真实块设备挂载”。
+1. 继续围绕 `v86` 完善真实 DOS 启动链路。
+2. 保持“系统盘生成脚本，扩展盘保持原样”的分层原则。
 3. 补齐 VGA / 键盘 / 声卡 / 内存扩展等兼容层。
 4. 为仙剑 95 做专项启动与性能调优。

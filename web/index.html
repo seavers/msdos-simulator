@@ -48,7 +48,7 @@
               <span>扩展硬盘</span>
               <select id="game-package-select"></select>
             </label>
-            <p class="field-note">可选：把固定目录游戏文件打成 FAT16 数据盘并作为 `hda` 挂载。第一阶段默认支持 `pal95/` 目录。</p>
+            <p class="field-note">可选：直接挂载 `storage/extendDisk/` 根目录下的原始扩展盘镜像文件；当前不再扫描 `pal95/` 子目录，也不再生成中间 `generated` 数据盘。</p>
             <div id="system-disk-options" class="inline-options">
               <label class="field checkbox">
                 <input id="startup-disk-dosidle" type="checkbox" />
@@ -108,11 +108,11 @@
             <h2>本地文档</h2>
             <ul class="hint-list">
               <li>第一目标是让 `msdos622_dosidle_a.img` 真实启动到 DOS 命令行。</li>
-              <li>若固定目录没有镜像，也可以直接从本地上传启动。</li>
-              <li>仙剑 95 的专项兼容将在 DOS 引导稳定后继续推进。</li>
+              <li>扩展硬盘请直接放到 `storage/extendDisk/` 根目录，并使用可被 DOS 识别的原始镜像格式。</li>
+              <li>仙剑 95 的专项兼容现在改为“只改 startupDisk，不改原始 PAL95 镜像”。</li>
             </ul>
             <a class="doc-link" href="/docs/dos622-boot-plan.md" target="_blank" rel="noreferrer">查看 dos6.22 启动步骤文档</a>
-            <a class="doc-link" href="/docs/pal95-hdd-plan.md" target="_blank" rel="noreferrer">查看 PAL95 硬盘装载文档</a>
+            <a class="doc-link" href="/docs/pal95-hdd-plan.md" target="_blank" rel="noreferrer">查看 PAL95 启动盘与扩展盘说明</a>
             <a class="doc-link" href="/docs/pal95-compatibility-roadmap.md" target="_blank" rel="noreferrer">查看 PAL95 兼容推进清单</a>
             <a class="doc-link" href="/docs/architecture.md" target="_blank" rel="noreferrer">查看整体架构设计文档</a>
           </section>
