@@ -29,6 +29,7 @@ const elements = {
   screen: document.querySelector("#dos-screen"),
   serverImageSelect: document.querySelector("#server-image-select"),
   soundEnabled: document.querySelector("#sound-enabled"),
+  soundIrq: document.querySelector("#sound-irq"),
   startupDiskAutoRun: document.querySelector("#startup-disk-auto-run"),
   startupDiskCdrom: document.querySelector("#startup-disk-cdrom"),
   startupDiskDosIdle: document.querySelector("#startup-disk-dosidle"),
@@ -125,6 +126,7 @@ function bindEvents() {
   elements.memorySize.addEventListener("change", saveSettings);
   elements.cpuProfile.addEventListener("change", saveSettings);
   elements.soundEnabled.addEventListener("change", saveSettings);
+  elements.soundIrq.addEventListener("change", saveSettings);
   elements.previewStartupButton.addEventListener("click", handlePreviewStartupScripts);
   elements.bootButton.addEventListener("click", handleBoot);
   elements.resetButton.addEventListener("click", handleReset);
@@ -612,7 +614,8 @@ function collectConfig(profile = null) {
   return {
     memoryMb: Number(elements.memorySize.value || profile?.memoryMb || 16),
     cpuProfile: elements.cpuProfile.value || profile?.cpuProfile || "486dx2",
-    soundEnabled: elements.soundEnabled.checked
+    soundEnabled: elements.soundEnabled.checked,
+    soundIrq: Number(elements.soundIrq.value || 5)
   };
 }
 
@@ -621,6 +624,7 @@ function buildStartupRequestPayload() {
     baseImageName: elements.serverImageSelect.value,
     packageId: elements.gamePackageSelect.value || "",
     soundEnabled: elements.startupDiskSound.checked,
+    soundIrq: Number(elements.soundIrq.value || 5),
     optimizeMemory: elements.startupDiskOptimizeMemory.checked,
     includeDosIdle: elements.startupDiskDosIdle.checked,
     includeCdDriver: elements.startupDiskCdrom.checked,
@@ -876,6 +880,7 @@ function saveSettings() {
     memorySize: elements.memorySize.value,
     cpuProfile: elements.cpuProfile.value,
     soundEnabled: elements.soundEnabled.checked,
+    soundIrq: elements.soundIrq.value,
     startupDiskOptimizeMemory: elements.startupDiskOptimizeMemory.checked,
     startupDiskAutoRun: elements.startupDiskAutoRun.checked,
     startupDiskSound: elements.startupDiskSound.checked,
@@ -926,6 +931,10 @@ function loadSettings() {
 
   if (typeof settings.soundEnabled === "boolean") {
     elements.soundEnabled.checked = settings.soundEnabled;
+  }
+
+  if (settings.soundIrq) {
+    elements.soundIrq.value = settings.soundIrq;
   }
 
   for (const [key, element] of Object.entries({

@@ -73,6 +73,10 @@ export class V86Adapter {
     this.emulator.add_listener("emulator-ready", () => {
       context.onLog?.(`v86 已就绪，准备从 ${context.diskImage.driveType} 设备启动 ${context.diskImage.name}`);
       context.onLog?.(`兼容配置已生效: memory=${context.config.memoryMb}MB, cpu=${cpuOptions.label}, sound=${context.config.soundEnabled ? "on" : "off"}`);
+      if (context.config.soundEnabled) {
+        context.onLog?.(`[声音调试] 当前启动盘布局版本: ${context.imageMeta?.startupDiskLayoutVersion || "pal95-sound-v4"}`);
+        context.onLog?.(`[声音调试] 启动参数硬件对齐: Port=220, IRQ=${context.config.soundIrq || 5}, DMA=1`);
+      }
     });
 
     this.emulator.add_listener("emulator-started", () => {
@@ -94,8 +98,9 @@ export class V86Adapter {
       context.onLog?.(`镜像资源加载失败: ${detail.file_name}`);
     });
 
-    // 步骤 4：处理 DOS 启动过程中的交互页。
+    // 步骤 4：处理 DOS 启动过程中的交互页并安装音频中转调试。
     this.installBootInteractionAutomation();
+    this.installAudioDebugBridge(context);
   }
 
   async handleCommand() {
@@ -339,6 +344,36 @@ export class V86Adapter {
     this.screenContainer.style.height = `${targetHeight}px`;
     canvas.style.width = `${targetWidth}px`;
     canvas.style.height = `${targetHeight}px`;
+  }
+
+  installAudioDebugBridge(context) {
+    if (!this.emulator || !context.config.soundEnabled) {
+      return;
+    }
+
+    const bus = this.emulator.bus;
+
+    bus.register("pcspeaker-enable", () => {
+      context.onLog?.("[声音中转] PC Speaker 发声通道已打开。");
+    });
+
+    bus.register("pcspeaker-disable", () => {
+      context.onLog?.("[声音中转] PC Speaker 发声通道已关闭。");
+    });
+
+    bus.register("dac-enable", () => {
+      context.onLog?.("[声音中转] Sound Blaster 16 (SB16) 核心音频 DMA 渲染就绪。");
+    });
+
+    bus.register("dac-tell-sampling-rate", (rate) => {
+      context.onLog?.(`[声音中转] SB16 采样率已对齐并设置为: ${rate}Hz`);
+    });
+
+    bus.register("mixer-volume", ([sourceId, channel, volumeDecibel]) => {
+      if (sourceId === 0) {
+        context.onLog?.(`[声音中转] SB16 主控音量调节: 通道=${channel}, 音量=${volumeDecibel}dB`);
+      }
+    });
   }
 }
 

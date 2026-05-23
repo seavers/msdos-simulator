@@ -614,7 +614,7 @@ async function resolveStartupDisk(options = {}) {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "startup-floppy-"));
   const configPath = path.join(tempRoot, "CONFIG.SYS");
   const autoexecPath = path.join(tempRoot, "AUTOEXEC.BAT");
-  const startupVirtualFiles = await buildStartupVirtualFiles(selectedPackage);
+  const startupVirtualFiles = await buildStartupVirtualFiles(selectedPackage, normalizedOptions);
   logServerStep("startup", `开始生成启动盘，基础盘=${baseImage.filePath}`);
   logServerStep("startup", `输出目录: ${startupDiskRoot}`);
   logServerStep("startup", `输出镜像: ${imagePath}`);
@@ -746,7 +746,7 @@ function buildStartupAutoexecBat(selectedPackage, options) {
   return [...lines, ""].join("\r\n");
 }
 
-async function buildStartupVirtualFiles(selectedPackage) {
+async function buildStartupVirtualFiles(selectedPackage, options = {}) {
   if (!selectedPackage || selectedPackage.familyId !== "pal95") {
     return [];
   }
@@ -754,10 +754,11 @@ async function buildStartupVirtualFiles(selectedPackage) {
   // 步骤 1：从当前 PAL95 扩展盘提取原始 SETUP.DAT，分别构造有声/静音两份会话内配置。
   const originalSetupBuffer = await readPal95SetupBuffer(selectedPackage);
   const soundSetupBuffer = Buffer.from(originalSetupBuffer);
+  const soundIrq = options.soundIrq || 5;
 
-  // 强制将声卡参数重写并对齐为 v86 默认的物理配置：IRQ=5（注：第17-18字节为MIDI端口参数，请勿作为DMA通道修改）
+  // 强制将声卡参数重写并对齐为 v86 默认的物理配置：IRQ=soundIrq（注：第17-18字节为MIDI端口参数，请勿作为DMA通道修改）
   if (soundSetupBuffer.length >= 14) {
-    soundSetupBuffer.writeUInt16LE(5, 12);
+    soundSetupBuffer.writeUInt16LE(soundIrq, 12);
   }
 
   const silentSetupBuffer = buildPal95SilentSetup(originalSetupBuffer);
@@ -769,7 +770,7 @@ async function buildStartupVirtualFiles(selectedPackage) {
     },
     {
       name: "RUNPAL.BAT",
-      content: ["@ECHO OFF", "ATTRIB -R C:\\SETUP.DAT >NUL", "COPY /Y A:\\SETPSND.DAT C:\\SETUP.DAT >NUL", "SET BLASTER=A220 I5 D1 H5 T6", "SET SOUND=C:\\", "SET MIDI=SYNTH:1 MAP:E MODE:0", "C:", "CD \\", "PAL.EXE"].join("\r\n") + "\r\n"
+      content: ["@ECHO OFF", "ATTRIB -R C:\\SETUP.DAT >NUL", "COPY /Y A:\\SETPSND.DAT C:\\SETUP.DAT >NUL", `SET BLASTER=A220 I${soundIrq} D1 H5 T6`, "SET SOUND=C:\\", "SET MIDI=SYNTH:1 MAP:E MODE:0", "C:", "CD \\", "PAL.EXE"].join("\r\n") + "\r\n"
     },
     {
       name: "PALDIAG.BAT",
@@ -1005,6 +1006,7 @@ function normalizeStartupDiskOptions(options = {}) {
     displayName: String(options.displayName || "").trim(),
     note: String(options.note || "").trim(),
     soundEnabled: Boolean(options.soundEnabled),
+    soundIrq: Number(options.soundIrq || 5),
     optimizeMemory: options.optimizeMemory !== false,
     includeDosIdle: options.includeDosIdle !== false,
     includeCdDriver,
@@ -1039,6 +1041,7 @@ function buildStartupDiskConfigKey(baseImage, selectedPackage, options) {
     packageImageSize: selectedPackage?.mount?.size || 0,
     packageImageUpdatedAt: selectedPackage?.mount?.updatedAt || "",
     soundEnabled: options.soundEnabled,
+    soundIrq: options.soundIrq || 5,
     optimizeMemory: options.optimizeMemory,
     includeDosIdle: options.includeDosIdle,
     includeCdDriver: options.includeCdDriver,
@@ -1107,6 +1110,7 @@ function buildStartupDiskPayload(record) {
     imageFileName: record.imageFileName,
     url: `/startup-disks-files/${encodeURIComponent(record.imageFileName)}`,
     catalog: "storage/startupDisk",
+    startupDiskLayoutVersion: startupDiskLayoutVersion,
     options: record.options || {}
   };
 }

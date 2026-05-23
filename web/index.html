@@ -106,6 +106,16 @@
               <input id="sound-enabled" type="checkbox" checked />
               <span>启用 SB16 / AdLib 兼容模式</span>
             </label>
+            <label class="field">
+              <span>声霸卡中断 (IRQ)</span>
+              <select id="sound-irq">
+                <option value="3">IRQ 3</option>
+                <option value="5" selected>IRQ 5 (默认)</option>
+                <option value="7">IRQ 7</option>
+                <option value="9">IRQ 9</option>
+                <option value="10">IRQ 10</option>
+              </select>
+            </label>
           </section>
 
           <section class="card">
