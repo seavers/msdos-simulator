@@ -40,15 +40,15 @@
               </select>
             </label>
             <label class="field" id="server-image-field">
-              <span>启动盘镜像</span>
+              <span>系统盘镜像</span>
               <select id="server-image-select"></select>
             </label>
-            <p id="startup-disk-description" class="field-note">请选择或生成启动盘镜像，启动时只会使用这里选中的成品盘。</p>
+            <p id="system-disk-description" class="field-note">系统盘镜像始终读取 `storage/images/` 下的原始 DOS 镜像；启动前会按下面的脚本参数自动复用或生成对应启动盘。</p>
             <label class="field" id="upload-image-field">
               <span>本地镜像</span>
               <input id="image-file" type="file" accept=".img,.ima,.vfd,.flp,.bin,.iso" />
             </label>
-            <p class="field-note">基础盘目录：`storage/images/`；启动盘目录：`storage/startupFloppyDisk/`；默认基础盘：`msdos622_dosidle_a.img`</p>
+            <p class="field-note">系统盘目录：`storage/images/`；自动生成盘目录：`storage/startupFloppyDisk/`；默认系统盘：`msdos622_dosidle_a.img`</p>
             <div class="status-pills">
               <span id="image-status" class="status-pill">未选择镜像</span>
               <span id="runtime-assets-status" class="status-pill">v86 运行时检测中</span>
@@ -62,9 +62,40 @@
               <select id="game-package-select"></select>
             </label>
             <p class="field-note">可选：把固定目录游戏文件打成 FAT16 数据盘并作为 `hda` 挂载。第一阶段默认支持 `pal95/` 目录。</p>
+            <div id="system-disk-options" class="inline-options">
+              <label class="field checkbox">
+                <input id="startup-disk-optimize-memory" type="checkbox" checked />
+                <span>优化常规内存（HIGH/UMB/LH）</span>
+              </label>
+              <label class="field checkbox">
+                <input id="startup-disk-auto-run" type="checkbox" checked />
+                <span>自动执行游戏启动命令</span>
+              </label>
+              <label class="field checkbox">
+                <input id="startup-disk-sound" type="checkbox" />
+                <span>使用声音版启动（PAL95 对应 RUNPAL）</span>
+              </label>
+              <label class="field checkbox">
+                <input id="startup-disk-dosidle" type="checkbox" />
+                <span>保留 DOSIDLE</span>
+              </label>
+              <label class="field checkbox">
+                <input id="startup-disk-cdrom" type="checkbox" />
+                <span>加载底层 CD 驱动（CD1.SYS）</span>
+              </label>
+              <label class="field checkbox">
+                <input id="startup-disk-mscdex" type="checkbox" />
+                <span>加载 MSCDEX 扩展</span>
+              </label>
+              <label class="field checkbox">
+                <input id="startup-disk-switch-c" type="checkbox" checked />
+                <span>启动后自动切到 C 盘</span>
+              </label>
+            </div>
+            <p class="field-note">这些选项会直接决定启动前生成的 `CONFIG.SYS` 和 `AUTOEXEC.BAT`。如果同一套参数已经生成过，对应系统盘会直接复用。</p>
             <div class="button-row">
-              <button id="generate-boot-button" type="button" class="secondary">生成启动盘</button>
-              <button id="refresh-images-button" type="button" class="secondary">刷新启动盘</button>
+              <button id="preview-startup-button" type="button" class="secondary">预览脚本</button>
+              <button id="refresh-images-button" type="button" class="secondary">刷新系统盘</button>
               <button id="pause-button" type="button" class="secondary">暂停</button>
               <button id="boot-button" type="button">启动</button>
               <button id="reset-button" type="button" class="secondary">重置</button>
@@ -112,72 +143,27 @@
       </main>
     </div>
 
-    <dialog id="startup-disk-dialog" class="startup-dialog">
-      <form method="dialog" class="startup-dialog-panel">
+    <dialog id="startup-preview-dialog" class="startup-dialog">
+      <div class="startup-dialog-panel">
         <header class="startup-dialog-header">
           <div>
-            <p class="eyebrow">Startup Floppy Builder</p>
-            <h2>生成启动盘</h2>
+            <p class="eyebrow">Startup Disk Preview</p>
+            <h2>系统盘脚本预览</h2>
           </div>
-          <button id="close-startup-disk-dialog" type="button" class="ghost-button" aria-label="关闭">关闭</button>
+          <button id="close-startup-preview-dialog" type="button" class="ghost-button" aria-label="关闭">关闭</button>
         </header>
-
-        <div class="startup-dialog-grid">
+        <p id="startup-preview-summary" class="field-note"></p>
+        <div class="startup-preview-grid">
           <label class="field">
-            <span>原始基础盘</span>
-            <select id="base-disk-select"></select>
+            <span>CONFIG.SYS</span>
+            <textarea id="startup-preview-config" rows="10" readonly></textarea>
           </label>
           <label class="field">
-            <span>扩展硬盘游戏包</span>
-            <select id="startup-disk-package-select"></select>
-          </label>
-          <label class="field">
-            <span>启动盘名称</span>
-            <input id="startup-disk-name" type="text" maxlength="80" placeholder="例如：仙剑95-静音启动盘" />
-          </label>
-          <label class="field">
-            <span>说明备注</span>
-            <textarea id="startup-disk-note" rows="3" placeholder="例如：保留 DOSIDLE，默认静音自动进游戏"></textarea>
+            <span>AUTOEXEC.BAT</span>
+            <textarea id="startup-preview-autoexec" rows="10" readonly></textarea>
           </label>
         </div>
-
-        <div class="startup-option-grid">
-          <label class="field checkbox">
-            <input id="startup-disk-optimize-memory" type="checkbox" checked />
-            <span>优化常规内存（HIGH/UMB/LH）</span>
-          </label>
-          <label class="field checkbox">
-            <input id="startup-disk-auto-run" type="checkbox" checked />
-            <span>自动执行游戏启动命令</span>
-          </label>
-          <label class="field checkbox">
-            <input id="startup-disk-sound" type="checkbox" />
-            <span>使用声音版启动（PAL95 对应 RUNPAL）</span>
-          </label>
-          <label class="field checkbox">
-            <input id="startup-disk-dosidle" type="checkbox" checked />
-            <span>保留 DOSIDLE</span>
-          </label>
-          <label class="field checkbox">
-            <input id="startup-disk-cdrom" type="checkbox" checked />
-            <span>加载底层 CD 驱动（CD1.SYS）</span>
-          </label>
-          <label class="field checkbox">
-            <input id="startup-disk-mscdex" type="checkbox" checked />
-            <span>加载 MSCDEX 扩展</span>
-          </label>
-          <label class="field checkbox">
-            <input id="startup-disk-switch-c" type="checkbox" checked />
-            <span>启动后自动切到 C 盘</span>
-          </label>
-        </div>
-
-        <p class="field-note">生成时会复制一份基础盘，只覆盖 `CONFIG.SYS` 和 `AUTOEXEC.BAT`，并把参数记录到 `storage/startupFloppyDisk/index.json`。PAL95 默认推荐关闭 `DOSIDLE` 和 `CD 驱动`，优先验证最小环境。</p>
-
-        <div class="startup-dialog-actions">
-          <button id="startup-disk-submit-button" type="button">开始生成</button>
-        </div>
-      </form>
+      </div>
     </dialog>
 
     <script type="module" src="/src/main.js"></script>

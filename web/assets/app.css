@@ -251,6 +251,13 @@ body {
   font-size: 12px;
 }
 
+.inline-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+
 .button-row {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
@@ -316,17 +323,10 @@ body {
   margin: 6px 0 0;
 }
 
-.startup-dialog-grid {
+.startup-preview-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
-}
-
-.startup-option-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px 12px;
-  margin-top: 8px;
 }
 
 .startup-dialog-actions {
@@ -392,8 +392,8 @@ body {
     grid-template-columns: 1fr 1fr;
   }
 
-  .startup-dialog-grid,
-  .startup-option-grid {
+  .inline-options,
+  .startup-preview-grid {
     grid-template-columns: 1fr;
   }
 }

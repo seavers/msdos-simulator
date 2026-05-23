@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { copyFile, mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -94,9 +95,15 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (url.pathname === "/api/startup-disks/preview" && request.method === "POST") {
+      const payload = await readBody(request);
+      sendJson(response, 200, await previewStartupDisk(payload));
+      return;
+    }
+
     if (url.pathname === "/api/startup-disks" && request.method === "POST") {
       const payload = await readBody(request);
-      sendJson(response, 201, await createStartupDisk(payload));
+      sendJson(response, 200, await resolveStartupDisk(payload));
       return;
     }
 
@@ -416,10 +423,11 @@ async function materializeGamePackage(packageId, options = {}) {
   };
 }
 
-async function createStartupDisk(options = {}) {
+async function previewStartupDisk(options = {}) {
   const normalizedOptions = normalizeStartupDiskOptions(options);
   const baseImage = await resolveBaseDiskImageByName(normalizedOptions.baseImageName);
   const selectedPackage = normalizedOptions.packageId ? gamePackages.find((item) => item.id === normalizedOptions.packageId) : null;
+  const configKey = buildStartupDiskConfigKey(baseImage, normalizedOptions);
 
   if (normalizedOptions.packageId && !selectedPackage) {
     throw new Error(`未找到游戏包: ${normalizedOptions.packageId}`);
@@ -427,6 +435,66 @@ async function createStartupDisk(options = {}) {
 
   if (normalizedOptions.autoRunGame && !selectedPackage) {
     throw new Error("自动执行游戏前，请先选择一个扩展硬盘游戏包。");
+  }
+
+  return {
+    configKey,
+    description: buildStartupDescription(selectedPackage, baseImage, normalizedOptions),
+    systemDiskName: baseImage.name,
+    startupDiskName: buildDefaultStartupDiskName(selectedPackage, normalizedOptions),
+    configSys: buildStartupConfigSys(normalizedOptions),
+    autoexecBat: buildStartupAutoexecBat(normalizedOptions)
+  };
+}
+
+async function resolveStartupDisk(options = {}) {
+  const normalizedOptions = normalizeStartupDiskOptions(options);
+  const baseImage = await resolveBaseDiskImageByName(normalizedOptions.baseImageName);
+  const selectedPackage = normalizedOptions.packageId ? gamePackages.find((item) => item.id === normalizedOptions.packageId) : null;
+  const configKey = buildStartupDiskConfigKey(baseImage, normalizedOptions);
+
+  if (normalizedOptions.packageId && !selectedPackage) {
+    throw new Error(`未找到游戏包: ${normalizedOptions.packageId}`);
+  }
+
+  if (normalizedOptions.autoRunGame && !selectedPackage) {
+    throw new Error("自动执行游戏前，请先选择一个扩展硬盘游戏包。");
+  }
+
+  const records = await readJson(startupFloppyIndexFile, []);
+  const reusableRecord = records.find((record) => record.configKey === configKey && existsSync(path.join(startupFloppyRoot, record.imageFileName)));
+
+  // 步骤 1：启动前先按基础盘和脚本参数查找是否已有完全相同的系统启动盘，有就直接复用。
+  if (reusableRecord) {
+    const imagePath = path.join(startupFloppyRoot, reusableRecord.imageFileName);
+    const fileStat = await stat(imagePath);
+    logServerStep("startup", `复用已存在启动盘: ${imagePath}`);
+
+    reusableRecord.lastUsedAt = new Date().toISOString();
+    await writeFile(startupFloppyIndexFile, JSON.stringify(records, null, 2));
+
+    return {
+      reused: true,
+      disk: {
+        ...buildStartupDiskPayload(reusableRecord),
+        size: fileStat.size,
+        sizeLabel: formatBytes(fileStat.size),
+        updatedAt: fileStat.mtime.toISOString(),
+        hasBootSignature: await detectBootSignature(imagePath),
+        driveType: inferDriveType(reusableRecord.imageFileName, fileStat.size)
+      },
+      preview: {
+        configKey,
+        description: reusableRecord.description,
+        configSys: buildStartupConfigSys(normalizedOptions),
+        autoexecBat: buildStartupAutoexecBat(normalizedOptions)
+      },
+      paths: {
+        baseImagePath: baseImage.filePath,
+        bootDiskPath: imagePath,
+        metadataPath: startupFloppyIndexFile
+      }
+    };
   }
 
   const imageFileName = buildStartupDiskFileName(normalizedOptions.displayName || selectedPackage?.name || baseImage.name);
@@ -458,10 +526,11 @@ async function createStartupDisk(options = {}) {
 
   // 步骤 3：写入本地索引，把生成来源、参数和说明保存下来，供页面后续直接展示和选择。
   const fileStat = await stat(imagePath);
-  const records = await readJson(startupFloppyIndexFile, []);
   const record = {
     id: `startup-${Date.now()}`,
     createdAt: new Date().toISOString(),
+    lastUsedAt: new Date().toISOString(),
+    configKey,
     imageFileName,
     name: normalizedOptions.displayName || buildDefaultStartupDiskName(selectedPackage, normalizedOptions),
     description: buildStartupDescription(selectedPackage, baseImage, normalizedOptions),
@@ -478,13 +547,20 @@ async function createStartupDisk(options = {}) {
   logServerStep("startup", `启动盘生成完成: ${imagePath} (${formatBytes(fileStat.size)})`);
 
   return {
+    reused: false,
     disk: {
       ...buildStartupDiskPayload(record),
       size: fileStat.size,
       sizeLabel: formatBytes(fileStat.size),
       updatedAt: fileStat.mtime.toISOString(),
       hasBootSignature: await detectBootSignature(imagePath),
-      driveType: inferDriveType(imageFileName, fileStat.size)
+        driveType: inferDriveType(imageFileName, fileStat.size)
+    },
+    preview: {
+      configKey,
+      description: record.description,
+      configSys: buildStartupConfigSys(normalizedOptions),
+      autoexecBat: buildStartupAutoexecBat(normalizedOptions)
     },
     paths: {
       baseImagePath: baseImage.filePath,
@@ -625,6 +701,24 @@ function normalizeStartupDiskOptions(options = {}) {
   };
 }
 
+function buildStartupDiskConfigKey(baseImage, options) {
+  const payload = {
+    baseImageName: baseImage.name,
+    baseImageSize: baseImage.size,
+    baseImageUpdatedAt: baseImage.updatedAt,
+    packageId: options.packageId,
+    soundEnabled: options.soundEnabled,
+    optimizeMemory: options.optimizeMemory,
+    includeDosIdle: options.includeDosIdle,
+    includeCdDriver: options.includeCdDriver,
+    includeMscdex: options.includeMscdex,
+    autoSwitchToCDrive: options.autoSwitchToCDrive,
+    autoRunGame: options.autoRunGame
+  };
+
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 16);
+}
+
 function buildStartupDiskFileName(sourceName) {
   const safeName = slugifyFileName(path.parse(sourceName).name) || "startup-disk";
   return `${safeName}-${Date.now()}.img`;
@@ -666,6 +760,8 @@ function buildStartupDiskPayload(record) {
     description: record.description,
     note: record.note || "",
     createdAt: record.createdAt,
+    lastUsedAt: record.lastUsedAt || record.createdAt,
+    configKey: record.configKey || "",
     baseImageName: record.baseImageName,
     packageId: record.packageId || "",
     packageName: record.packageName || "",
