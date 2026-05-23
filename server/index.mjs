@@ -30,6 +30,8 @@ const v86BuildRoot = v86PackageRoot ? path.join(v86PackageRoot, "build") : null;
 const supportedDiskExtensions = new Set([".img", ".ima", ".vfd", ".flp", ".iso", ".bin"]);
 const execFileAsync = promisify(execFile);
 const defaultBootDiskImageName = "msdos622_dosidle_a.img";
+const fat16PartitionStartSector = 63;
+const startupDiskLayoutVersion = "pal95-sound-v4";
 const knownGameFamilies = {
   pal95: {
     id: "pal95",
@@ -39,7 +41,7 @@ const knownGameFamilies = {
       storage: { level: "ready", summary: "当前方案直接挂载原始扩展盘镜像，不再重打 FAT16 数据盘。" },
       memory: { level: "ready", summary: "已支持通过系统盘脚本控制 HIMEM、EMM386、DOS=HIGH,UMB 等启动参数。" },
       vga: { level: "ready", summary: "已支持 VGA BIOS 与图形模式切换日志，便于观察 PAL95 的 320x200 图形模式。" },
-      sound: { level: "partial", summary: "当前声音链路只通过启动盘脚本注入环境变量，不再改写原始游戏镜像内的 SETUP.DAT。" },
+      sound: { level: "partial", summary: "当前会在启动盘侧按会话注入 SB16 环境变量，并同步切换 PAL95 所需的 SETUP.DAT 声音配置。" },
       timing: { level: "partial", summary: "当前依赖 v86 默认 CPU/PIT 时序，若出现速度异常，需要继续做专项调优。" }
     }
   }
@@ -47,7 +49,7 @@ const knownGameFamilies = {
 
 const defaultProfiles = [
   { id: "dos-default", name: "MS-DOS 6.0 默认", memoryMb: 16, cpuProfile: "486dx2", soundEnabled: true },
-  { id: "pal95", name: "仙剑 95 兼容预设", memoryMb: 16, cpuProfile: "486dx2", soundEnabled: false }
+  { id: "pal95", name: "仙剑 95 兼容预设", memoryMb: 16, cpuProfile: "486dx2", soundEnabled: true }
 ];
 
 await ensureJsonFile(profilesFile, defaultProfiles);
@@ -160,7 +162,8 @@ const server = createServer(async (request, response) => {
 
     if (url.pathname.startsWith("/api/game-packages/") && url.pathname.endsWith("/resolve-mount") && request.method === "POST") {
       const packageId = path.basename(url.pathname.replace("/resolve-mount", ""));
-      sendJson(response, 200, await resolveGamePackageMount(packageId));
+      const payload = await readBody(request);
+      sendJson(response, 200, await resolveGamePackageMount(packageId, payload));
       return;
     }
 
@@ -477,13 +480,35 @@ async function listGamePackages() {
   return diskImages.map((diskImage) => buildGamePackageFromDiskImage(diskImage));
 }
 
-async function resolveGamePackageMount(packageId) {
+async function resolveGamePackageMount(packageId, options = {}) {
   const gamePackage = await resolveGamePackageById(packageId);
 
   if (!gamePackage) {
     throw new Error(`未找到扩展硬盘: ${packageId}`);
   }
 
+  // 步骤 1：当用户明确要走 MSCDEX/CD 驱动链路时，优先保留原始 CD-ROM 挂载，避免被自动转成 HDD。
+  if (gamePackage.sourceDriveType === "cdrom" && options.mountAsCdrom) {
+    return {
+      converted: false,
+      cached: false,
+      package: {
+        ...gamePackage,
+        preferredSlot: "cdrom",
+        mount: {
+          ...gamePackage.mount,
+          driveType: "cdrom"
+        }
+      },
+      paths: {
+        sourceImagePath: gamePackage.sourcePath,
+        cdromImagePath: gamePackage.sourcePath,
+        metadataPath: extendHddIndexFile
+      }
+    };
+  }
+
+  // 步骤 2：已经是 HDD 的扩展盘直接复用，保持当前游戏盘启动路径不变。
   if (gamePackage.sourceDriveType === "hardDisk") {
     return {
       converted: false,
@@ -503,17 +528,19 @@ async function resolveGamePackageMount(packageId) {
     };
   }
 
+  // 步骤 3：其余软盘/镜像仍按原策略转成 HDD，兼顾现有 PAL95 直接进游戏的路径。
   return convertExtendDiskToHdd(gamePackage);
 }
 
 async function previewStartupDisk(options = {}) {
-  const normalizedOptions = normalizeStartupDiskOptions(options);
-  const baseImage = await resolveBaseDiskImageByName(normalizedOptions.baseImageName);
-  const selectedPackage = normalizedOptions.packageId ? await resolveGamePackageById(normalizedOptions.packageId) : null;
+  const requestOptions = normalizeStartupDiskOptions(options);
+  const baseImage = await resolveBaseDiskImageByName(requestOptions.baseImageName);
+  const selectedPackage = requestOptions.packageId ? await resolveGamePackageById(requestOptions.packageId) : null;
+  const normalizedOptions = applyStartupDiskPackageConstraints(selectedPackage, requestOptions);
   const configKey = buildStartupDiskConfigKey(baseImage, selectedPackage, normalizedOptions);
 
-  if (normalizedOptions.packageId && !selectedPackage) {
-    throw new Error(`未找到游戏包: ${normalizedOptions.packageId}`);
+  if (requestOptions.packageId && !selectedPackage) {
+    throw new Error(`未找到游戏包: ${requestOptions.packageId}`);
   }
 
   if (normalizedOptions.autoRunGame && !selectedPackage) {
@@ -532,13 +559,14 @@ async function previewStartupDisk(options = {}) {
 }
 
 async function resolveStartupDisk(options = {}) {
-  const normalizedOptions = normalizeStartupDiskOptions(options);
-  const baseImage = await resolveBaseDiskImageByName(normalizedOptions.baseImageName);
-  const selectedPackage = normalizedOptions.packageId ? await resolveGamePackageById(normalizedOptions.packageId) : null;
+  const requestOptions = normalizeStartupDiskOptions(options);
+  const baseImage = await resolveBaseDiskImageByName(requestOptions.baseImageName);
+  const selectedPackage = requestOptions.packageId ? await resolveGamePackageById(requestOptions.packageId) : null;
+  const normalizedOptions = applyStartupDiskPackageConstraints(selectedPackage, requestOptions);
   const configKey = buildStartupDiskConfigKey(baseImage, selectedPackage, normalizedOptions);
 
-  if (normalizedOptions.packageId && !selectedPackage) {
-    throw new Error(`未找到游戏包: ${normalizedOptions.packageId}`);
+  if (requestOptions.packageId && !selectedPackage) {
+    throw new Error(`未找到游戏包: ${requestOptions.packageId}`);
   }
 
   if (normalizedOptions.autoRunGame && !selectedPackage) {
@@ -586,7 +614,7 @@ async function resolveStartupDisk(options = {}) {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "startup-floppy-"));
   const configPath = path.join(tempRoot, "CONFIG.SYS");
   const autoexecPath = path.join(tempRoot, "AUTOEXEC.BAT");
-  const startupVirtualFiles = buildStartupVirtualFiles(selectedPackage);
+  const startupVirtualFiles = await buildStartupVirtualFiles(selectedPackage);
   logServerStep("startup", `开始生成启动盘，基础盘=${baseImage.filePath}`);
   logServerStep("startup", `输出目录: ${startupDiskRoot}`);
   logServerStep("startup", `输出镜像: ${imagePath}`);
@@ -647,7 +675,7 @@ async function resolveStartupDisk(options = {}) {
       sizeLabel: formatBytes(fileStat.size),
       updatedAt: fileStat.mtime.toISOString(),
       hasBootSignature: await detectBootSignature(imagePath),
-        driveType: inferDriveType(imageFileName, fileStat.size)
+      driveType: inferDriveType(imageFileName, fileStat.size)
     },
     preview: {
       configKey,
@@ -709,7 +737,7 @@ function buildStartupAutoexecBat(selectedPackage, options) {
     lines.push(options.optimizeMemory ? "LH DOSIDLE" : "DOSIDLE");
   }
 
-  if (options.autoRunGame && selectedPackage?.familyId === "pal95") {
+  if (options.autoRunGame && selectedPackage?.familyId === "pal95" && selectedPackage.sourceDriveType !== "cdrom") {
     lines.push(options.soundEnabled ? "RUNPAL" : "RUNSAFE");
   } else if (options.autoRunGame && selectedPackage) {
     lines.push("C:");
@@ -718,19 +746,30 @@ function buildStartupAutoexecBat(selectedPackage, options) {
   return [...lines, ""].join("\r\n");
 }
 
-function buildStartupVirtualFiles(selectedPackage) {
+async function buildStartupVirtualFiles(selectedPackage) {
   if (!selectedPackage || selectedPackage.familyId !== "pal95") {
     return [];
   }
 
+  // 步骤 1：从当前 PAL95 扩展盘提取原始 SETUP.DAT，分别构造有声/静音两份会话内配置。
+  const originalSetupBuffer = await readPal95SetupBuffer(selectedPackage);
+  const soundSetupBuffer = Buffer.from(originalSetupBuffer);
+
+  // 强制将声卡参数重写并对齐为 v86 默认的物理配置：IRQ=5（注：第17-18字节为MIDI端口参数，请勿作为DMA通道修改）
+  if (soundSetupBuffer.length >= 14) {
+    soundSetupBuffer.writeUInt16LE(5, 12);
+  }
+
+  const silentSetupBuffer = buildPal95SilentSetup(originalSetupBuffer);
+
   return [
     {
       name: "RUNSAFE.BAT",
-      content: ["@ECHO OFF", "SET BLASTER=", "SET SOUND=", "SET MIDI=", "C:", "CD \\", "PAL.EXE"].join("\r\n") + "\r\n"
+      content: ["@ECHO OFF", "ATTRIB -R C:\\SETUP.DAT >NUL", "COPY /Y A:\\SETPNOS.DAT C:\\SETUP.DAT >NUL", "SET BLASTER=", "SET SOUND=", "SET MIDI=", "C:", "CD \\", "PAL.EXE"].join("\r\n") + "\r\n"
     },
     {
       name: "RUNPAL.BAT",
-      content: ["@ECHO OFF", "SET BLASTER=A220 I7 D1 H5 T6", "SET SOUND=C:\\", "SET MIDI=SYNTH:1 MAP:E MODE:0", "C:", "CD \\", "PAL.EXE"].join("\r\n") + "\r\n"
+      content: ["@ECHO OFF", "ATTRIB -R C:\\SETUP.DAT >NUL", "COPY /Y A:\\SETPSND.DAT C:\\SETUP.DAT >NUL", "SET BLASTER=A220 I5 D1 H5 T6", "SET SOUND=C:\\", "SET MIDI=SYNTH:1 MAP:E MODE:0", "C:", "CD \\", "PAL.EXE"].join("\r\n") + "\r\n"
     },
     {
       name: "PALDIAG.BAT",
@@ -741,11 +780,12 @@ function buildStartupVirtualFiles(selectedPackage) {
         "VER",
         "MEM",
         "SET BLASTER",
+        "DIR C:\\SETUP.DAT",
         "C:",
         "CD \\",
         "DIR PAL.EXE",
         "ECHO.",
-        "ECHO 当前方案不会改写 C 盘镜像内的 SETUP.DAT。"
+        "ECHO 当前方案会在本次模拟会话内切换 SETUP.DAT，不会回写仓库中的原始镜像文件。"
       ].join("\r\n") + "\r\n"
     },
     {
@@ -754,11 +794,51 @@ function buildStartupVirtualFiles(selectedPackage) {
         "PAL95 启动说明",
         "",
         "1. 当前方案直接挂载 storage/extendDisk 下的原始镜像作为 C 盘。",
-        "2. RUNSAFE/RUNPAL 仅放在 A 盘，不会改写 C 盘镜像中的 SETUP.DAT。",
-        "3. 如果原始镜像需要特定 SETUP.DAT、批处理或目录结构，请先在线下调整。"
+        "2. RUNSAFE/RUNPAL 会在本次会话内把 A 盘上的 SETUP 变体复制 to C:\\SETUP.DAT。",
+        "3. 模拟器内的写入不会回写仓库中的原始镜像文件。",
+        "4. 如果原始镜像需要额外目录结构或安装结果，请先在线下调整。"
       ].join("\r\n") + "\r\n"
+    },
+    {
+      name: "SETPSND.DAT",
+      content: soundSetupBuffer
+    },
+    {
+      name: "SETPNOS.DAT",
+      content: silentSetupBuffer
     }
   ];
+}
+
+async function readPal95SetupBuffer(selectedPackage) {
+  if (!selectedPackage?.sourcePath) {
+    throw new Error("PAL95 扩展盘缺少源镜像路径，无法提取 SETUP.DAT。");
+  }
+
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "pal95-setup-"));
+  const setupPath = path.join(tempRoot, "SETUP.DAT");
+  const imageSpecifier = selectedPackage.sourceDriveType === "hardDisk" ? `${selectedPackage.sourcePath}@@${fat16PartitionStartSector}S` : selectedPackage.sourcePath;
+
+  try {
+    // 步骤 1：从当前挂载源中提取原始 SETUP.DAT，确保声音版脚本使用的是同一份游戏配置基线。
+    await execFileAsync("mcopy", ["-n", "-i", imageSpecifier, "::SETUP.DAT", setupPath]);
+    return await readFile(setupPath);
+  } catch (error) {
+    throw new Error(`PAL95 声音模式需要从扩展盘中读取 SETUP.DAT，但提取失败：${error.message}`);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+}
+
+function buildPal95SilentSetup(originalSetupBuffer) {
+  const silentSetupBuffer = Buffer.from(originalSetupBuffer);
+
+  // 步骤 1：保留 PAL95 配置文件头，仅清空已知的声音设备选项区，构造可回退的静音兼容配置。
+  for (let offset = 8; offset <= 18 && offset + 1 < silentSetupBuffer.length; offset += 2) {
+    silentSetupBuffer.writeUInt16LE(0, offset);
+  }
+
+  return silentSetupBuffer;
 }
 
 async function collectDiskImages(rootPath, urlPrefix, catalog) {
@@ -933,8 +1013,24 @@ function normalizeStartupDiskOptions(options = {}) {
   };
 }
 
+function applyStartupDiskPackageConstraints(selectedPackage, options) {
+  const supportsCdrom = selectedPackage?.sourceDriveType === "cdrom";
+
+  if (supportsCdrom) {
+    return options;
+  }
+
+  // 步骤 1：仅在真实 CD-ROM 扩展盘场景下保留 MSCDEX/CD 驱动，避免 HDD 游戏盘误勾选后卡在引导阶段。
+  return {
+    ...options,
+    includeCdDriver: false,
+    includeMscdex: false
+  };
+}
+
 function buildStartupDiskConfigKey(baseImage, selectedPackage, options) {
   const payload = {
+    startupDiskLayoutVersion,
     baseImageName: baseImage.name,
     baseImageSize: baseImage.size,
     baseImageUpdatedAt: baseImage.updatedAt,
