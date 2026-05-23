@@ -27,6 +27,7 @@ const elements = {
   startupDiskCdrom: document.querySelector("#startup-disk-cdrom"),
   startupDiskDosIdle: document.querySelector("#startup-disk-dosidle"),
   startupDiskMscdex: document.querySelector("#startup-disk-mscdex"),
+  startupDiskNote: document.querySelector("#startup-disk-note"),
   startupDiskOptimizeMemory: document.querySelector("#startup-disk-optimize-memory"),
   startupDiskSound: document.querySelector("#startup-disk-sound"),
   startupDiskSwitchC: document.querySelector("#startup-disk-switch-c"),
@@ -113,6 +114,10 @@ function bindEvents() {
   elements.memorySize.addEventListener("change", saveSettings);
   elements.cpuProfile.addEventListener("change", saveSettings);
   elements.soundEnabled.addEventListener("change", saveSettings);
+  elements.startupDiskNote.addEventListener("change", () => {
+    syncSelectedImageStatus();
+    saveSettings();
+  });
   elements.previewStartupButton.addEventListener("click", handlePreviewStartupScripts);
   elements.refreshImagesButton.addEventListener("click", refreshSystemDiskImages);
   elements.bootButton.addEventListener("click", handleBoot);
@@ -204,6 +209,9 @@ async function handlePreviewStartupScripts() {
   try {
     const preview = await fetchStartupPreview();
     elements.startupPreviewSummary.textContent = `${preview.description} | 复用键: ${preview.configKey}`;
+    if (preview.note) {
+      elements.startupPreviewSummary.textContent = `${elements.startupPreviewSummary.textContent} | 备注: ${preview.note}`;
+    }
     elements.startupPreviewConfig.value = preview.configSys;
     elements.startupPreviewAutoexec.value = preview.autoexecBat;
     elements.startupPreviewDialog.showModal();
@@ -232,6 +240,9 @@ async function handleBoot() {
       appendLog(`启动盘路径: ${resolvedStartupDisk.paths.bootDiskPath}`);
       appendLog(`启动盘索引: ${resolvedStartupDisk.paths.metadataPath}`);
       appendLog(`启动盘说明: ${resolvedStartupDisk.preview.description}`);
+      if (resolvedStartupDisk.disk.note) {
+        appendLog(`系统盘备注: ${resolvedStartupDisk.disk.note}`);
+      }
 
       bootDisk = {
         imageMeta: resolvedStartupDisk.disk,
@@ -379,6 +390,7 @@ function buildStartupRequestPayload() {
     includeDosIdle: elements.startupDiskDosIdle.checked,
     includeCdDriver: elements.startupDiskCdrom.checked,
     includeMscdex: elements.startupDiskMscdex.checked,
+    note: elements.startupDiskNote.value.trim(),
     autoSwitchToCDrive: elements.startupDiskSwitchC.checked,
     autoRunGame: elements.startupDiskAutoRun.checked
   };
@@ -579,17 +591,15 @@ function syncSystemDiskDescription(systemDisk) {
     return;
   }
 
-  const packageLabel = elements.gamePackageSelect.value || "无扩展硬盘";
-  const segments = [
-    `系统盘: ${systemDisk.name}`,
-    `游戏包: ${packageLabel}`,
-    `常规内存优化: ${elements.startupDiskOptimizeMemory.checked ? "开" : "关"}`,
-    `DOSIDLE: ${elements.startupDiskDosIdle.checked ? "开" : "关"}`,
-    `CD 驱动: ${elements.startupDiskCdrom.checked ? "开" : "关"}`,
-    `MSCDEX: ${elements.startupDiskMscdex.checked ? "开" : "关"}`
-  ];
+  const selectedPackage = availableGamePackages.find((item) => item.id === elements.gamePackageSelect.value);
+  const packageLabel = selectedPackage?.name || "无扩展硬盘";
+  const segments = [`系统盘: ${systemDisk.name}`, `游戏包: ${packageLabel}`];
 
-  elements.systemDiskDescription.textContent = `${segments.join(" | ")}。启动前会按这组参数复用或生成系统启动盘。`;
+  if (elements.startupDiskNote.value.trim()) {
+    segments.push(`备注: ${elements.startupDiskNote.value.trim()}`);
+  }
+
+  elements.systemDiskDescription.textContent = segments.join(" | ");
 }
 
 function syncPauseButton() {
@@ -672,7 +682,8 @@ function saveSettings() {
     startupDiskDosIdle: elements.startupDiskDosIdle.checked,
     startupDiskCdrom: elements.startupDiskCdrom.checked,
     startupDiskMscdex: elements.startupDiskMscdex.checked,
-    startupDiskSwitchC: elements.startupDiskSwitchC.checked
+    startupDiskSwitchC: elements.startupDiskSwitchC.checked,
+    startupDiskNote: elements.startupDiskNote.value
   };
 
   try {
@@ -739,6 +750,10 @@ function loadSettings() {
 
   if (elements.profileSelect.value === "pal95") {
     elements.soundEnabled.checked = false;
+  }
+
+  if (typeof settings.startupDiskNote === "string") {
+    elements.startupDiskNote.value = settings.startupDiskNote;
   }
 
   syncStartupOptionStates();

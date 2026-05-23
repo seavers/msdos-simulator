@@ -440,6 +440,7 @@ async function previewStartupDisk(options = {}) {
   return {
     configKey,
     description: buildStartupDescription(selectedPackage, baseImage, normalizedOptions),
+    note: normalizedOptions.note,
     systemDiskName: baseImage.name,
     startupDiskName: buildDefaultStartupDiskName(selectedPackage, normalizedOptions),
     configSys: buildStartupConfigSys(normalizedOptions),

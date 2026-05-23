@@ -11,7 +11,7 @@
       <header class="hero">
         <div>
           <p class="eyebrow">MS-DOS 6.0 Web Simulator</p>
-          <h1>以 msdos622_dosidle_a.img 启动为首要目标的 Web DOS 模拟器</h1>
+          <h1>面向 DOS 游戏调试的 Web 模拟器</h1>
           <p class="summary">前端负责 Canvas 与模拟器画面承载，后端负责镜像目录、运行时资源、会话记录与启动参数，真实 DOS 由 `v86` 接入。</p>
         </div>
         <div class="hero-status" id="hero-status">引擎未启动</div>
@@ -43,12 +43,12 @@
               <span>系统盘镜像</span>
               <select id="server-image-select"></select>
             </label>
-            <p id="system-disk-description" class="field-note">系统盘镜像始终读取 `storage/images/` 下的原始 DOS 镜像；启动前会按下面的脚本参数自动复用或生成对应启动盘。</p>
+            <p id="system-disk-description" class="field-note">启动前会按当前参数自动复用或生成系统启动盘。</p>
             <label class="field" id="upload-image-field">
               <span>本地镜像</span>
               <input id="image-file" type="file" accept=".img,.ima,.vfd,.flp,.bin,.iso" />
             </label>
-            <p class="field-note">系统盘目录：`storage/images/`；自动生成盘目录：`storage/startupFloppyDisk/`；默认系统盘：`msdos622_dosidle_a.img`</p>
+            <p class="field-note">来源目录：`storage/images/`</p>
             <div class="status-pills">
               <span id="image-status" class="status-pill">未选择镜像</span>
               <span id="runtime-assets-status" class="status-pill">v86 运行时检测中</span>
@@ -92,7 +92,11 @@
                 <span>启动后自动切到 C 盘</span>
               </label>
             </div>
-            <p class="field-note">这些选项会直接决定启动前生成的 `CONFIG.SYS` 和 `AUTOEXEC.BAT`。如果同一套参数已经生成过，对应系统盘会直接复用。</p>
+            <label class="field">
+              <span>系统盘备注</span>
+              <input id="startup-disk-note" type="text" maxlength="120" placeholder="例如：PAL95 最小环境 / 只关 MSCDEX" />
+            </label>
+            <p class="field-note">同一套脚本参数会直接复用已有系统启动盘。</p>
             <div class="button-row">
               <button id="preview-startup-button" type="button" class="secondary">预览脚本</button>
               <button id="refresh-images-button" type="button" class="secondary">刷新系统盘</button>
