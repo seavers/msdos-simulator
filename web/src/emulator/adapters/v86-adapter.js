@@ -68,6 +68,7 @@ export class V86Adapter {
       ...driveOptions
     });
     this.paused = false;
+    this.installAudioUnlockBridge();
 
     // 步骤 3：注册关键事件，便于观察 DOS 引导进度和画面模式切换。
     this.emulator.add_listener("emulator-ready", () => {
@@ -82,6 +83,7 @@ export class V86Adapter {
     this.emulator.add_listener("emulator-started", () => {
       context.onLog?.("v86 已开始运行，键盘焦点已切换到模拟器画面。");
       screenContainer.focus();
+      void this.tryResumeAudioContext();
     });
 
     this.emulator.add_listener("emulator-stopped", () => {
@@ -145,6 +147,7 @@ export class V86Adapter {
   async destroy() {
     this.teardownBootInteractionAutomation();
     this.teardownScreenResizeObserver();
+    this.teardownAudioUnlockBridge();
 
     if (!this.emulator) {
       this.display?.clearV86Surface?.();
@@ -374,6 +377,71 @@ export class V86Adapter {
         context.onLog?.(`[声音中转] SB16 主控音量调节: 通道=${channel}, 音量=${volumeDecibel}dB`);
       }
     });
+  }
+
+  installAudioUnlockBridge() {
+    this.teardownAudioUnlockBridge();
+
+    if (!this.context?.config.soundEnabled) {
+      return;
+    }
+
+    this.audioUnlockEvents = ["pointerdown", "keydown", "touchstart"];
+    this.audioUnlockHandler = () => {
+      void this.tryResumeAudioContext(true);
+    };
+
+    for (const eventName of this.audioUnlockEvents) {
+      window.addEventListener(eventName, this.audioUnlockHandler, true);
+      if (this.screenViewport) {
+        this.screenViewport.addEventListener(eventName, this.audioUnlockHandler, true);
+      }
+    }
+
+    void this.tryResumeAudioContext(false);
+  }
+
+  teardownAudioUnlockBridge() {
+    if (this.audioUnlockHandler) {
+      for (const eventName of this.audioUnlockEvents) {
+        window.removeEventListener(eventName, this.audioUnlockHandler, true);
+        if (this.screenViewport) {
+          this.screenViewport.removeEventListener(eventName, this.audioUnlockHandler, true);
+        }
+      }
+    }
+
+    this.audioUnlockHandler = null;
+    this.audioUnlockEvents = [];
+  }
+
+  async tryResumeAudioContext(logOnResume = false) {
+    const audioContext = this.emulator?.speaker_adapter?.audio_context;
+
+    if (!audioContext || typeof audioContext.resume !== "function") {
+      return false;
+    }
+
+    if (audioContext.state === "running") {
+      return true;
+    }
+
+    try {
+      await audioContext.resume();
+    } catch {
+      return false;
+    }
+
+    if (audioContext.state !== "running") {
+      return false;
+    }
+
+    if (logOnResume) {
+      this.context?.onLog?.("浏览器音频上下文已恢复，SB16 / AdLib 输出可以开始工作。");
+    }
+
+    this.teardownAudioUnlockBridge();
+    return true;
   }
 }
 
