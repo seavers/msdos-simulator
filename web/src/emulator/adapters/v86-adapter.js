@@ -15,6 +15,10 @@ export class V86Adapter {
     this.bootInteractionGeneration = 0;
     this.completedBootInteractions = new Set();
     this.bootInteractionTimer = null;
+    this.screenContainer = null;
+    this.screenViewport = null;
+    this.resizeObserver = null;
+    this.lastScreenMetrics = null;
   }
 
   async boot(context) {
@@ -40,6 +44,9 @@ export class V86Adapter {
 
     // 步骤 2：初始化 BIOS、VGA、内存与启动顺序，真正进入 DOS 引导链路。
     this.display = context.display;
+    this.screenContainer = screenContainer;
+    this.screenViewport = screenContainer.parentElement;
+    this.installScreenResizeObserver();
     this.emulator = new V86({
       wasm_path: context.runtimeAssets.v86.wasmUrl,
       memory_size: context.config.memoryMb * 1024 * 1024,
@@ -78,6 +85,8 @@ export class V86Adapter {
     });
 
     this.emulator.add_listener("screen-set-size", ([width, height, bpp]) => {
+      this.lastScreenMetrics = { width, height, bpp };
+      this.fitScreenViewport();
       context.onLog?.(`VGA 模式切换: ${width}x${height}x${bpp}`);
     });
 
@@ -130,9 +139,13 @@ export class V86Adapter {
 
   async destroy() {
     this.teardownBootInteractionAutomation();
+    this.teardownScreenResizeObserver();
 
     if (!this.emulator) {
       this.display?.clearV86Surface?.();
+      this.screenContainer = null;
+      this.screenViewport = null;
+      this.lastScreenMetrics = null;
       this.context = null;
       return;
     }
@@ -146,6 +159,9 @@ export class V86Adapter {
     this.context = null;
     this.paused = false;
     this.completedBootInteractions.clear();
+    this.screenContainer = null;
+    this.screenViewport = null;
+    this.lastScreenMetrics = null;
     this.display?.clearV86Surface?.();
   }
 
@@ -273,6 +289,56 @@ export class V86Adapter {
     }
 
     return "";
+  }
+
+  installScreenResizeObserver() {
+    this.teardownScreenResizeObserver();
+
+    if (!this.screenViewport || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    this.resizeObserver = new ResizeObserver(() => {
+      this.fitScreenViewport();
+    });
+    this.resizeObserver.observe(this.screenViewport);
+  }
+
+  teardownScreenResizeObserver() {
+    if (!this.resizeObserver) {
+      return;
+    }
+
+    this.resizeObserver.disconnect();
+    this.resizeObserver = null;
+  }
+
+  fitScreenViewport() {
+    if (!this.screenContainer || !this.screenViewport) {
+      return;
+    }
+
+    const canvas = this.screenContainer.querySelector("canvas");
+
+    if (!canvas) {
+      window.requestAnimationFrame(() => this.fitScreenViewport());
+      return;
+    }
+
+    // 步骤 5：优先使用画布真实像素尺寸做等比缩放，避免单纯 width:100% 导致 320x200 画面被裁掉一半。
+    const sourceWidth = canvas.width || this.lastScreenMetrics?.width || 640;
+    const sourceHeight = canvas.height || this.lastScreenMetrics?.height || 400;
+    const availableWidth = Math.max(1, this.screenViewport.clientWidth - 16);
+    const availableHeight = Math.max(1, this.screenViewport.clientHeight - 16);
+    const rawScale = Math.min(availableWidth / sourceWidth, availableHeight / sourceHeight);
+    const scale = rawScale >= 1 ? Math.max(1, Math.floor(rawScale)) : rawScale;
+    const targetWidth = Math.max(1, Math.floor(sourceWidth * scale));
+    const targetHeight = Math.max(1, Math.floor(sourceHeight * scale));
+
+    this.screenContainer.style.width = `${targetWidth}px`;
+    this.screenContainer.style.height = `${targetHeight}px`;
+    canvas.style.width = `${targetWidth}px`;
+    canvas.style.height = `${targetHeight}px`;
   }
 }
 

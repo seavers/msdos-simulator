@@ -120,6 +120,7 @@ body {
   position: relative;
   flex: 1;
   min-height: 0;
+  display: flex;
 }
 
 #dos-screen {
@@ -139,12 +140,28 @@ body {
   background: #02080d;
   border: 1px solid rgba(111, 212, 255, 0.12);
   outline: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+}
+
+.v86-surface {
+  max-width: 100%;
+  max-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .v86-screen canvas {
   display: block;
-  width: 100%;
+  width: auto;
   height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 
 .hidden {

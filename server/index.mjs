@@ -542,7 +542,8 @@ function buildStartupConfigSys(options) {
 function buildStartupAutoexecBat(options) {
   const lines = ["@echo off"];
 
-  if (options.includeCdDriver) {
+  // 步骤 2：把 MSCDEX 与底层 CD 驱动拆开控制，便于继续定位到底是哪一层触发了兼容问题。
+  if (options.includeMscdex) {
     lines.push(options.optimizeMemory ? "LH MSCDEX.EXE /D:banana /L:R" : "MSCDEX.EXE /D:banana /L:R");
   }
 
@@ -607,6 +608,8 @@ async function resolveBaseDiskImageByName(imageName) {
 }
 
 function normalizeStartupDiskOptions(options = {}) {
+  const includeCdDriver = options.includeCdDriver !== false;
+
   return {
     baseImageName: String(options.baseImageName || defaultBootDiskImageName),
     packageId: String(options.packageId || ""),
@@ -615,7 +618,8 @@ function normalizeStartupDiskOptions(options = {}) {
     soundEnabled: Boolean(options.soundEnabled),
     optimizeMemory: options.optimizeMemory !== false,
     includeDosIdle: options.includeDosIdle !== false,
-    includeCdDriver: options.includeCdDriver !== false,
+    includeCdDriver,
+    includeMscdex: typeof options.includeMscdex === "boolean" ? options.includeMscdex : includeCdDriver,
     autoSwitchToCDrive: options.autoSwitchToCDrive !== false,
     autoRunGame: Boolean(options.autoRunGame)
   };
@@ -639,6 +643,7 @@ function buildStartupDescription(selectedPackage, baseImage, options) {
     `常规内存优化: ${options.optimizeMemory ? "开" : "关"}`,
     `DOSIDLE: ${options.includeDosIdle ? "开" : "关"}`,
     `CD 驱动: ${options.includeCdDriver ? "开" : "关"}`,
+    `MSCDEX: ${options.includeMscdex ? "开" : "关"}`,
     `自动切 C 盘: ${options.autoSwitchToCDrive ? "开" : "关"}`,
     `自动执行游戏: ${options.autoRunGame ? "开" : "关"}`
   ];

@@ -29,6 +29,7 @@ const elements = {
   startupDiskCdrom: document.querySelector("#startup-disk-cdrom"),
   startupDiskDescription: document.querySelector("#startup-disk-description"),
   startupDiskDosIdle: document.querySelector("#startup-disk-dosidle"),
+  startupDiskMscdex: document.querySelector("#startup-disk-mscdex"),
   startupDiskName: document.querySelector("#startup-disk-name"),
   startupDiskNote: document.querySelector("#startup-disk-note"),
   startupDiskOptimizeMemory: document.querySelector("#startup-disk-optimize-memory"),
@@ -267,6 +268,7 @@ async function openStartupDiskDialog() {
   elements.startupDiskSound.checked = false;
   elements.startupDiskDosIdle.checked = false;
   elements.startupDiskCdrom.checked = false;
+  elements.startupDiskMscdex.checked = false;
   elements.startupDiskSwitchC.checked = true;
   elements.startupDiskAutoRun.checked = Boolean(elements.startupDiskPackageSelect.value);
   elements.startupDiskName.value = "";
@@ -291,6 +293,7 @@ async function handleGenerateStartupDisk() {
       optimizeMemory: elements.startupDiskOptimizeMemory.checked,
       includeDosIdle: elements.startupDiskDosIdle.checked,
       includeCdDriver: elements.startupDiskCdrom.checked,
+      includeMscdex: elements.startupDiskMscdex.checked,
       autoSwitchToCDrive: elements.startupDiskSwitchC.checked,
       autoRunGame: elements.startupDiskAutoRun.checked
     };
@@ -385,12 +388,14 @@ function syncStartupDialogOptions() {
     elements.startupDiskAutoRun.checked = false;
     elements.startupDiskSound.checked = false;
     elements.startupDiskCdrom.checked = false;
+    elements.startupDiskMscdex.checked = false;
     elements.startupDiskDosIdle.checked = false;
     elements.startupDiskOptimizeMemory.checked = true;
   } else if (selectedPackageId === "pal95") {
     // 步骤 1：PAL95 默认优先走最小环境，先把常规内存腾出来，再逐步加回 DOSIDLE / 光驱 / 声卡变量。
     elements.startupDiskOptimizeMemory.checked = true;
     elements.startupDiskCdrom.checked = false;
+    elements.startupDiskMscdex.checked = false;
     elements.startupDiskDosIdle.checked = false;
     elements.startupDiskSound.checked = false;
   }
